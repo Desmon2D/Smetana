@@ -5,10 +5,12 @@ use uuid::Uuid;
 
 use super::wall_joints::{HubPolygon, JointVertices, WallAtJunction, MAX_MITER_RATIO};
 
-/// Two-wall miter joint.
+/// Two-wall miter joint with hub polygon to cover internal outline artifacts.
 pub(super) fn compute_two_wall_miter(
     waj_list: &[WallAtJunction],
     joints: &mut HashMap<(Uuid, bool), JointVertices>,
+    hubs: &mut Vec<HubPolygon>,
+    fill: egui::Color32,
 ) {
     let a = &waj_list[0];
     let b = &waj_list[1];
@@ -22,14 +24,13 @@ pub(super) fn compute_two_wall_miter(
     let max_half = a.half_thick.max(b.half_thick);
     let max_dist = max_half * MAX_MITER_RATIO;
 
-    // Intersect a.left line with b.right line (they face each other between the walls).
-    // And a.right line with b.left line.
-    let miter_lr = line_line_intersection(
-        a.left, a.dir, b.right, b.dir,
-    );
-    let miter_rl = line_line_intersection(
-        a.right, a.dir, b.left, b.dir,
-    );
+    // Intersect a.left with b.right and a.right with b.left (cross-side = miter points).
+    let miter_lr = line_line_intersection(a.left, a.dir, b.right, b.dir);
+    let miter_rl = line_line_intersection(a.right, a.dir, b.left, b.dir);
+
+    // Intersect same-side edges (a.left with b.left, a.right with b.right).
+    let ll = line_line_intersection(a.left, a.dir, b.left, b.dir);
+    let rr = line_line_intersection(a.right, a.dir, b.right, b.dir);
 
     // For wall A:
     let a_left = match miter_lr {
@@ -59,6 +60,31 @@ pub(super) fn compute_two_wall_miter(
         (b.wall_id, b.is_end),
         JointVertices { left: b_left, right: b_right },
     );
+
+    // Build hub polygon from all 4 intersection points to cover the corner area.
+    let candidates = [miter_lr, miter_rl, ll, rr];
+    let mut hub_vertices: Vec<egui::Pos2> = candidates
+        .iter()
+        .filter_map(|opt| {
+            opt.filter(|pt| (*pt - junction).length() < max_dist)
+        })
+        .collect();
+
+    if hub_vertices.len() >= 3 {
+        // Sort by angle from centroid to ensure correct polygon winding.
+        let cx = hub_vertices.iter().map(|p| p.x).sum::<f32>() / hub_vertices.len() as f32;
+        let cy = hub_vertices.iter().map(|p| p.y).sum::<f32>() / hub_vertices.len() as f32;
+        hub_vertices.sort_by(|a, b| {
+            let angle_a = (a.y - cy).atan2(a.x - cx);
+            let angle_b = (b.y - cy).atan2(b.x - cx);
+            angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        hubs.push(HubPolygon {
+            vertices: hub_vertices,
+            fill,
+        });
+    }
 }
 
 /// Three+ wall hub polygon.

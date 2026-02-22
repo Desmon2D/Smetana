@@ -21,7 +21,7 @@ pub struct JointVertices {
     pub right: egui::Pos2,
 }
 
-/// A hub polygon at a junction with 3+ walls.
+/// A hub polygon at a wall junction, drawn on top to cover internal outline artifacts.
 pub struct HubPolygon {
     pub vertices: Vec<egui::Pos2>,
     pub fill: egui::Color32,
@@ -169,7 +169,7 @@ pub fn compute_joints(
         waj_list.sort_by(|a, b| a.angle.partial_cmp(&b.angle).unwrap_or(std::cmp::Ordering::Equal));
 
         if waj_list.len() == 2 {
-            compute_two_wall_miter(&waj_list, &mut joints);
+            compute_two_wall_miter(&waj_list, &mut joints, &mut hubs, wall_fill);
         } else {
             compute_hub_polygon(&waj_list, &mut joints, &mut hubs, wall_fill);
         }
