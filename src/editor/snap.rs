@@ -1,10 +1,11 @@
-use crate::model::{Point2D, Wall};
+use uuid::Uuid;
+use crate::model::{Point2D, Wall, WallSide};
 
 /// Screen-space radius (pixels) for snapping to existing wall vertices.
 const VERTEX_SNAP_SCREEN_PX: f64 = 15.0;
 
 /// What the cursor snapped to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum SnapType {
     /// No snapping (Shift held — free drawing).
     None,
@@ -12,10 +13,16 @@ pub enum SnapType {
     Grid,
     /// Snapped to an existing wall endpoint.
     Vertex,
+    /// Snapped to a wall side edge (T-junction attachment point).
+    WallEdge {
+        wall_id: Uuid,
+        side: WallSide,
+        t: f64,
+    },
 }
 
 /// Result of a snap operation: the snapped world position and what it snapped to.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SnapResult {
     pub position: Point2D,
     pub snap_type: SnapType,
@@ -57,6 +64,44 @@ pub fn snap(
         return SnapResult {
             position: vertex,
             snap_type: SnapType::Vertex,
+        };
+    }
+
+    // Wall edge snap: check proximity to wall side edges (for T-junctions)
+    let mut closest_edge_dist = f64::MAX;
+    let mut closest_edge: Option<(Uuid, WallSide, f64, Point2D)> = None;
+
+    for wall in walls {
+        let dx = wall.end.x - wall.start.x;
+        let dy = wall.end.y - wall.start.y;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 1.0 {
+            continue;
+        }
+        let half_t = wall.thickness / 2.0;
+        // Left normal: (-dy/len, dx/len) * half_thickness
+        let lnx = -dy / len * half_t;
+        let lny = dx / len * half_t;
+
+        for (side, sign) in [(WallSide::Left, 1.0), (WallSide::Right, -1.0)] {
+            let edge_start = Point2D::new(wall.start.x + lnx * sign, wall.start.y + lny * sign);
+            let edge_end = Point2D::new(wall.end.x + lnx * sign, wall.end.y + lny * sign);
+            let (t, proj) = world_pos.project_onto_segment(edge_start, edge_end);
+            // Only snap to interior of edge (not endpoints)
+            if t > 0.01 && t < 0.99 {
+                let dist = world_pos.distance_to(proj);
+                if dist < snap_radius_world && dist < closest_edge_dist {
+                    closest_edge_dist = dist;
+                    closest_edge = Some((wall.id, side, t, proj));
+                }
+            }
+        }
+    }
+
+    if let Some((wall_id, side, t, pos)) = closest_edge {
+        return SnapResult {
+            position: pos,
+            snap_type: SnapType::WallEdge { wall_id, side, t },
         };
     }
 

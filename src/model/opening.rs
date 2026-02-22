@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::wall::Point2D;
+
 /// The kind of opening: door or window, with type-specific dimensions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OpeningKind {
@@ -68,6 +70,9 @@ pub struct Opening {
     pub wall_id: Option<Uuid>,
     /// Offset from wall start to the center of the opening (mm).
     pub offset_along_wall: f64,
+    /// World position for rendering when not attached to a wall.
+    #[serde(default)]
+    pub fallback_position: Option<Point2D>,
 }
 
 impl Opening {
@@ -78,6 +83,7 @@ impl Opening {
             kind,
             wall_id,
             offset_along_wall,
+            fallback_position: None,
         }
     }
 

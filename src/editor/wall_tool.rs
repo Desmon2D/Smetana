@@ -1,3 +1,4 @@
+use crate::editor::snap::SnapResult;
 use crate::model::Point2D;
 
 /// State machine for the wall drawing tool.
@@ -16,6 +17,8 @@ pub struct WallTool {
     pub preview_end: Option<Point2D>,
     /// The very first point of the current chain (for contour closing detection).
     pub chain_start: Option<Point2D>,
+    /// The last snap result (for determining T-junction attachment on click).
+    pub last_snap: Option<SnapResult>,
 }
 
 impl Default for WallTool {
@@ -24,6 +27,7 @@ impl Default for WallTool {
             state: WallToolState::Idle,
             preview_end: None,
             chain_start: None,
+            last_snap: None,
         }
     }
 }
@@ -34,6 +38,7 @@ impl WallTool {
         self.state = WallToolState::Idle;
         self.preview_end = None;
         self.chain_start = None;
+        self.last_snap = None;
     }
 
     /// Continue chaining from the given endpoint.

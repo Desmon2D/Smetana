@@ -7,9 +7,11 @@ use crate::model::{OpeningKind, PriceList, Project, Room, WallSide};
 use crate::persistence::{list_project_entries, load_project, save_project, ProjectEntry};
 
 mod canvas;
+mod canvas_draw;
 mod price_list;
 mod project_list;
 mod properties_panel;
+mod property_edits;
 mod service_picker;
 mod services_panel;
 mod toolbar;

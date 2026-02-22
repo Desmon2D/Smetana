@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::model::{Point2D, Room, Wall, WallSide};
@@ -35,36 +35,67 @@ impl WallGraph {
             };
         }
 
-        // Step 1+2: Collect and merge vertices
+        // Step 1+2: Collect and merge vertices (including junction points)
         let mut positions: Vec<Point2D> = Vec::new();
-        let mut point_to_vertex: HashMap<(Uuid, bool), usize> = HashMap::new(); // (wall_id, is_end) -> vertex index
+
+        // For each wall, collect all vertices along its length:
+        // start, junction points (sorted by t), end.
+        // wall_vertices[i] = list of vertex indices for wall i, in order from start to end.
+        let mut wall_vertices: Vec<(Uuid, Vec<usize>)> = Vec::new();
 
         for wall in walls {
             let start_idx = find_or_insert_vertex(&mut positions, wall.start);
-            let end_idx = find_or_insert_vertex(&mut positions, wall.end);
-            point_to_vertex.insert((wall.id, false), start_idx);
-            point_to_vertex.insert((wall.id, true), end_idx);
-        }
 
-        // Step 3: Build adjacency lists
-        let mut adjacency: Vec<Vec<(usize, Uuid, f64)>> = vec![Vec::new(); positions.len()];
+            // Collect all junction t values from both sides
+            let mut junction_ts: Vec<f64> = Vec::new();
+            for j in &wall.left_side.junctions {
+                junction_ts.push(j.t);
+            }
+            for j in &wall.right_side.junctions {
+                if !junction_ts.iter().any(|&existing| (existing - j.t).abs() < 0.001) {
+                    junction_ts.push(j.t);
+                }
+            }
+            junction_ts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-        for wall in walls {
-            let start_idx = point_to_vertex[&(wall.id, false)];
-            let end_idx = point_to_vertex[&(wall.id, true)];
+            let mut verts = vec![start_idx];
 
-            // Skip degenerate walls (zero-length after merging)
-            if start_idx == end_idx {
-                continue;
+            // Add intermediate vertices at junction points
+            for &t in &junction_ts {
+                let pt = Point2D::new(
+                    wall.start.x + (wall.end.x - wall.start.x) * t,
+                    wall.start.y + (wall.end.y - wall.start.y) * t,
+                );
+                let idx = find_or_insert_vertex(&mut positions, pt);
+                verts.push(idx);
             }
 
-            // Forward edge: start -> end
-            let angle_fwd = angle_between(positions[start_idx], positions[end_idx]);
-            adjacency[start_idx].push((end_idx, wall.id, angle_fwd));
+            let end_idx = find_or_insert_vertex(&mut positions, wall.end);
+            verts.push(end_idx);
 
-            // Backward edge: end -> start
-            let angle_bwd = angle_between(positions[end_idx], positions[start_idx]);
-            adjacency[end_idx].push((start_idx, wall.id, angle_bwd));
+            wall_vertices.push((wall.id, verts));
+        }
+
+        // Step 3: Build adjacency lists — each wall segment becomes edges
+        let mut adjacency: Vec<Vec<(usize, Uuid, f64)>> = vec![Vec::new(); positions.len()];
+
+        for (wall_id, verts) in &wall_vertices {
+            for i in 0..verts.len() - 1 {
+                let from = verts[i];
+                let to = verts[i + 1];
+
+                if from == to {
+                    continue;
+                }
+
+                // Forward edge
+                let angle_fwd = angle_between(positions[from], positions[to]);
+                adjacency[from].push((to, *wall_id, angle_fwd));
+
+                // Backward edge
+                let angle_bwd = angle_between(positions[to], positions[from]);
+                adjacency[to].push((from, *wall_id, angle_bwd));
+            }
         }
 
         // Step 4: Sort each vertex's edges by angle
@@ -278,115 +309,6 @@ impl WallGraph {
 
         rooms
     }
-}
-
-/// Computed metrics for a room.
-#[derive(Debug, Clone)]
-pub struct RoomMetrics {
-    /// Inner polygon vertices (wall centerlines offset inward by half-thickness)
-    pub inner_polygon: Vec<Point2D>,
-    /// Floor area in mm²
-    pub area: f64,
-    /// Inner perimeter in mm
-    pub perimeter: f64,
-}
-
-/// Compute the inner polygon, area, and perimeter for a room.
-///
-/// For each wall in the room's contour, offset the wall centerline inward
-/// by half-thickness on the room-facing side. Then intersect consecutive
-/// offset lines to get the inner polygon vertices.
-pub fn compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics> {
-    if room.wall_ids.len() < 3 {
-        return None;
-    }
-
-    // Build offset lines for each wall
-    let mut offset_segments: Vec<(Point2D, Point2D)> = Vec::new();
-
-    for (i, wall_id) in room.wall_ids.iter().enumerate() {
-        let wall = walls.iter().find(|w| w.id == *wall_id)?;
-        let side = room.wall_sides[i];
-        let half_t = wall.thickness / 2.0;
-
-        // Wall direction vector
-        let dx = wall.end.x - wall.start.x;
-        let dy = wall.end.y - wall.start.y;
-        let len = (dx * dx + dy * dy).sqrt();
-        if len < 1e-6 {
-            return None;
-        }
-
-        // Unit normal: perpendicular to wall direction
-        // Left normal (when looking start→end): (-dy, dx) / len
-        // Right normal: (dy, -dx) / len
-        let (nx, ny) = match side {
-            WallSide::Left => (-dy / len, dx / len),
-            WallSide::Right => (dy / len, -dx / len),
-        };
-
-        // Offset the wall centerline inward by half-thickness
-        let offset_start = Point2D::new(wall.start.x + nx * half_t, wall.start.y + ny * half_t);
-        let offset_end = Point2D::new(wall.end.x + nx * half_t, wall.end.y + ny * half_t);
-
-        offset_segments.push((offset_start, offset_end));
-    }
-
-    // Intersect consecutive offset lines to get inner polygon vertices
-    let n = offset_segments.len();
-    let mut inner_polygon = Vec::with_capacity(n);
-
-    for i in 0..n {
-        let j = (i + 1) % n;
-        let (a1, a2) = offset_segments[i];
-        let (b1, b2) = offset_segments[j];
-
-        match line_intersection(a1, a2, b1, b2) {
-            Some(pt) => inner_polygon.push(pt),
-            // If lines are parallel, use the endpoint of the first segment
-            None => inner_polygon.push(offset_segments[i].1),
-        }
-    }
-
-    // Compute area using Shoelace formula
-    let mut area = 0.0;
-    for i in 0..inner_polygon.len() {
-        let j = (i + 1) % inner_polygon.len();
-        let p1 = inner_polygon[i];
-        let p2 = inner_polygon[j];
-        area += p1.x * p2.y - p2.x * p1.y;
-    }
-    let area = (area / 2.0).abs();
-
-    // Compute perimeter
-    let mut perimeter = 0.0;
-    for i in 0..inner_polygon.len() {
-        let j = (i + 1) % inner_polygon.len();
-        perimeter += inner_polygon[i].distance_to(inner_polygon[j]);
-    }
-
-    Some(RoomMetrics {
-        inner_polygon,
-        area,
-        perimeter,
-    })
-}
-
-/// Intersect two infinite lines defined by points (a1,a2) and (b1,b2).
-/// Returns None if lines are parallel.
-fn line_intersection(a1: Point2D, a2: Point2D, b1: Point2D, b2: Point2D) -> Option<Point2D> {
-    let d1x = a2.x - a1.x;
-    let d1y = a2.y - a1.y;
-    let d2x = b2.x - b1.x;
-    let d2y = b2.y - b1.y;
-
-    let denom = d1x * d2y - d1y * d2x;
-    if denom.abs() < 1e-10 {
-        return None;
-    }
-
-    let t = ((b1.x - a1.x) * d2y - (b1.y - a1.y) * d2x) / denom;
-    Some(Point2D::new(a1.x + t * d1x, a1.y + t * d1y))
 }
 
 /// A directed edge in the wall graph.

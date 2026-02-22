@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use eframe::egui;
 
-use crate::editor::room_detection::compute_room_metrics;
-use crate::model::{AssignedService, Opening, OpeningKind, Project, TargetObjectType, UnitType, Wall, WallSide};
+use crate::model::{AssignedService, Project, TargetObjectType, UnitType, Wall, WallSide};
 use super::{App, ServiceTarget};
 
 pub(super) struct AssignedServiceRow {
@@ -17,80 +16,19 @@ pub(super) struct AssignedServiceRow {
 
 impl App {
     pub(super) fn compute_wall_side_quantity(&self, unit_type: UnitType, wall: &Wall, side: WallSide) -> f64 {
-        match unit_type {
-            UnitType::Piece => 1.0,
-            UnitType::SquareMeter => {
-                let side_data = match side {
-                    WallSide::Left => &wall.left_side,
-                    WallSide::Right => &wall.right_side,
-                };
-                let gross = side_data.gross_area();
-                let openings_area: f64 = wall
-                    .openings
-                    .iter()
-                    .filter_map(|oid| self.project.openings.iter().find(|o| o.id == *oid))
-                    .map(|o| o.kind.height() * o.kind.width())
-                    .sum();
-                (gross - openings_area) / 1_000_000.0
-            }
-            UnitType::LinearMeter => {
-                let side_data = match side {
-                    WallSide::Left => &wall.left_side,
-                    WallSide::Right => &wall.right_side,
-                };
-                side_data.length / 1000.0
-            }
-        }
+        crate::model::wall_side_quantity(unit_type, wall, side, &self.project.openings)
     }
 
     pub(super) fn compute_wall_section_quantity(&self, unit_type: UnitType, wall: &Wall, side: WallSide, section_index: usize) -> f64 {
-        let side_data = match side {
-            WallSide::Left => &wall.left_side,
-            WallSide::Right => &wall.right_side,
-        };
-
-        if let Some(section) = side_data.sections.get(section_index) {
-            match unit_type {
-                UnitType::Piece => 1.0,
-                UnitType::SquareMeter => section.gross_area() / 1_000_000.0,
-                UnitType::LinearMeter => section.length / 1000.0,
-            }
-        } else {
-            self.compute_wall_side_quantity(unit_type, wall, side)
-        }
+        crate::model::wall_section_quantity(unit_type, wall, side, section_index, &self.project.openings)
     }
 
-    pub(super) fn compute_opening_quantity(&self, unit_type: UnitType, opening: &Opening) -> f64 {
-        match unit_type {
-            UnitType::Piece => 1.0,
-            UnitType::SquareMeter => match &opening.kind {
-                OpeningKind::Door { height, width } => height * width / 1_000_000.0,
-                OpeningKind::Window { height, width, reveal_width, .. } => {
-                    let reveal_perimeter = 2.0 * height + 2.0 * width;
-                    reveal_perimeter * reveal_width / 1_000_000.0
-                }
-            },
-            UnitType::LinearMeter => match &opening.kind {
-                OpeningKind::Door { height, width } => (2.0 * height + width) / 1000.0,
-                OpeningKind::Window { height, width, .. } => {
-                    (2.0 * height + 2.0 * width) / 1000.0
-                }
-            },
-        }
+    pub(super) fn compute_opening_quantity(&self, unit_type: UnitType, opening: &crate::model::Opening) -> f64 {
+        crate::model::opening_quantity(unit_type, opening)
     }
 
     pub(super) fn compute_room_quantity(&self, unit_type: UnitType, room: &crate::model::Room) -> f64 {
-        match unit_type {
-            UnitType::Piece => 1.0,
-            UnitType::SquareMeter => {
-                compute_room_metrics(room, &self.project.walls)
-                    .map_or(0.0, |m| m.area / 1_000_000.0)
-            }
-            UnitType::LinearMeter => {
-                compute_room_metrics(room, &self.project.walls)
-                    .map_or(0.0, |m| m.perimeter / 1000.0)
-            }
-        }
+        crate::model::room_quantity(unit_type, room, &self.project.walls)
     }
 
     pub(super) fn build_assigned_rows_for(

@@ -1,4 +1,4 @@
-use crate::model::{Opening, OpeningKind, Project, Wall};
+use crate::model::{Opening, OpeningKind, Point2D, Project, SideData, Wall, WallSide};
 
 pub trait Command {
     fn execute(&mut self, project: &mut Project);
@@ -10,14 +10,37 @@ pub trait Command {
 
 pub struct AddWallCommand {
     pub wall: Wall,
+    /// Junction created on another wall's side (if T-junction attachment).
+    /// (target_wall_id, side, t)
+    pub junction_target: Option<(uuid::Uuid, WallSide, f64)>,
 }
 
 impl Command for AddWallCommand {
     fn execute(&mut self, project: &mut Project) {
+        // Add junction to target wall if T-junction
+        if let Some((target_id, side, t)) = self.junction_target {
+            if let Some(target) = project.walls.iter_mut().find(|w| w.id == target_id) {
+                let side_data = match side {
+                    WallSide::Left => &mut target.left_side,
+                    WallSide::Right => &mut target.right_side,
+                };
+                side_data.add_junction(self.wall.id, t);
+            }
+        }
         project.walls.push(self.wall.clone());
     }
 
     fn undo(&mut self, project: &mut Project) {
+        // Remove junction from target wall
+        if let Some((target_id, side, _)) = self.junction_target {
+            if let Some(target) = project.walls.iter_mut().find(|w| w.id == target_id) {
+                let side_data = match side {
+                    WallSide::Left => &mut target.left_side,
+                    WallSide::Right => &mut target.right_side,
+                };
+                side_data.remove_junction(self.wall.id);
+            }
+        }
         project.walls.retain(|w| w.id != self.wall.id);
     }
 
@@ -30,6 +53,10 @@ pub struct RemoveWallCommand {
     wall: Wall,
     /// Openings that were attached to this wall (removed together).
     openings: Vec<Opening>,
+    /// Junctions that other walls had referencing this wall.
+    /// Stored so they can be restored on undo.
+    /// (host_wall_id, side, t)
+    removed_junctions: Vec<(uuid::Uuid, WallSide, f64)>,
 }
 
 impl RemoveWallCommand {
@@ -41,23 +68,70 @@ impl RemoveWallCommand {
             .filter(|o| o.wall_id == Some(wall_id))
             .cloned()
             .collect();
-        Some(Self { wall, openings })
+        // Find junctions on other walls that reference this wall
+        let mut removed_junctions = Vec::new();
+        for other in &project.walls {
+            if other.id == wall_id {
+                continue;
+            }
+            for j in &other.left_side.junctions {
+                if j.wall_id == wall_id {
+                    removed_junctions.push((other.id, WallSide::Left, j.t));
+                }
+            }
+            for j in &other.right_side.junctions {
+                if j.wall_id == wall_id {
+                    removed_junctions.push((other.id, WallSide::Right, j.t));
+                }
+            }
+        }
+        Some(Self { wall, openings, removed_junctions })
     }
 }
 
 impl Command for RemoveWallCommand {
     fn execute(&mut self, project: &mut Project) {
-        // Remove attached openings
+        // Detach openings (set fallback_position, clear wall_id) instead of removing
+        let wall = &self.wall;
+        let wall_len = wall.length();
         for o in &self.openings {
-            project.openings.retain(|po| po.id != o.id);
+            if let Some(po) = project.openings.iter_mut().find(|po| po.id == o.id) {
+                if wall_len > 0.0 {
+                    let t = po.offset_along_wall / wall_len;
+                    po.fallback_position = Some(Point2D::new(
+                        wall.start.x + (wall.end.x - wall.start.x) * t,
+                        wall.start.y + (wall.end.y - wall.start.y) * t,
+                    ));
+                }
+                po.wall_id = None;
+            }
+        }
+        // Remove junctions referencing this wall from other walls
+        for other in &mut project.walls {
+            other.left_side.remove_junction(self.wall.id);
+            other.right_side.remove_junction(self.wall.id);
         }
         project.walls.retain(|w| w.id != self.wall.id);
     }
 
     fn undo(&mut self, project: &mut Project) {
         project.walls.push(self.wall.clone());
+        // Re-attach openings to the restored wall
         for o in &self.openings {
-            project.openings.push(o.clone());
+            if let Some(po) = project.openings.iter_mut().find(|po| po.id == o.id) {
+                po.wall_id = o.wall_id;
+                po.fallback_position = None;
+            }
+        }
+        // Restore junctions on other walls
+        for &(host_id, side, t) in &self.removed_junctions {
+            if let Some(host) = project.walls.iter_mut().find(|w| w.id == host_id) {
+                let side_data = match side {
+                    WallSide::Left => &mut host.left_side,
+                    WallSide::Right => &mut host.right_side,
+                };
+                side_data.add_junction(self.wall.id, t);
+            }
         }
     }
 
@@ -73,30 +147,22 @@ pub struct ModifyWallCommand {
 }
 
 #[derive(Clone)]
-struct WallProps {
-    thickness: f64,
-    height_start: f64,
-    height_end: f64,
+pub struct WallProps {
+    pub thickness: f64,
+    pub left_side: SideData,
+    pub right_side: SideData,
 }
 
 impl ModifyWallCommand {
-    pub fn from_values(
-        wall_id: uuid::Uuid,
-        old_thickness: f64, old_height_start: f64, old_height_end: f64,
-        new_thickness: f64, new_height_start: f64, new_height_end: f64,
-    ) -> Self {
-        Self {
-            wall_id,
-            old: WallProps { thickness: old_thickness, height_start: old_height_start, height_end: old_height_end },
-            new: WallProps { thickness: new_thickness, height_start: new_height_start, height_end: new_height_end },
-        }
+    pub fn new(wall_id: uuid::Uuid, old: WallProps, new: WallProps) -> Self {
+        Self { wall_id, old, new }
     }
 
     fn apply(props: &WallProps, wall_id: uuid::Uuid, project: &mut Project) {
         if let Some(wall) = project.walls.iter_mut().find(|w| w.id == wall_id) {
             wall.thickness = props.thickness;
-            wall.height_start = props.height_start;
-            wall.height_end = props.height_end;
+            wall.left_side = props.left_side.clone();
+            wall.right_side = props.right_side.clone();
         }
     }
 }

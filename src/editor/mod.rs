@@ -1,7 +1,11 @@
 pub mod canvas;
 pub mod opening_tool;
 pub mod room_detection;
+pub mod room_metrics;
 pub mod snap;
+pub mod triangulation;
+pub mod wall_joints;
+mod wall_joints_miter;
 pub mod wall_tool;
 
 pub use canvas::Canvas;

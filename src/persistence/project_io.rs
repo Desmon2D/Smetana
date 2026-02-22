@@ -112,7 +112,7 @@ mod tests {
         assert_eq!(loaded.walls[0].start.x, 0.0);
         assert_eq!(loaded.walls[0].end.x, 4000.0);
         assert_eq!(loaded.walls[0].thickness, 200.0);
-        assert_eq!(loaded.walls[0].height_start, 2700.0);
+        assert_eq!(loaded.walls[0].left_side.height_start, 2700.0);
 
         // Cleanup
         let _ = fs::remove_file(&path);
