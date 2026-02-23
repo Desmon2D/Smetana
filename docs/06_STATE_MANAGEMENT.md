@@ -1,6 +1,6 @@
 # State Management
 
-## App Struct Fields — `src/app/mod.rs:32`
+## App Struct Fields — `src/app/mod.rs`
 
 ### Screen Navigation State
 
@@ -24,32 +24,32 @@
 
 | Field | Type | Purpose | Mutated By |
 |-------|------|---------|------------|
-| `project` | `Project` | **Core project data** — walls, openings, rooms, services | Commands (via History), direct mutation in property panel, room merge |
+| `project` | `Project` | **Core project data** — walls, openings, rooms, labels, services | Snapshot undo/redo swaps entire Project; direct mutation via Project methods and property panel |
 | `price_list` | `PriceList` | Current price list (services catalog) | Price list window UI, import |
 
 ### Editor State
 
 | Field | Type | Purpose | Mutated By |
 |-------|------|---------|------------|
-| `editor` | `EditorState` | Active tool, selection, canvas viewport, tool states | Tool selection, canvas input, keyboard shortcuts |
+| `editor` | `EditorState` | Active tool, selection, canvas viewport, tool states, orphan positions | Tool selection, canvas input, keyboard shortcuts |
 
 `EditorState` contains:
 
 | Sub-field | Type | Purpose |
 |-----------|------|---------|
-| `editor.active_tool` | `EditorTool` | Currently active tool (Select/Wall/Door/Window) |
-| `editor.selection` | `Selection` | Currently selected object (None/Wall/Opening/Room) |
+| `editor.active_tool` | `EditorTool` | Currently active tool (Select/Wall/Door/Window/Label) |
+| `editor.selection` | `Selection` | Currently selected object (None/Wall/Opening/Room/Label) |
 | `editor.canvas` | `Canvas` | Viewport: offset, zoom, grid_step, cursor_world_pos |
 | `editor.wall_tool` | `WallTool` | Wall drawing state machine, chain tracking, snap state |
 | `editor.opening_tool` | `OpeningTool` | Hover wall ID and offset for opening placement |
+| `editor.orphan_positions` | `HashMap<Uuid, DVec2>` | Transient world positions for detached openings (not serialized) |
 
 ### History State
 
 | Field | Type | Purpose | Mutated By |
 |-------|------|---------|------------|
-| `history` | `History` | Undo/redo stacks with version counter | `push()`, `push_already_applied()`, `undo()`, `redo()` |
-| `wall_edit_snapshot` | `Option<(Uuid, WallProps)>` | Snapshot of wall properties before panel editing | `update_edit_snapshots()`, `flush_property_edits()` |
-| `opening_edit_snapshot` | `Option<(Uuid, OpeningKind)>` | Snapshot of opening kind before panel editing | `update_edit_snapshots()`, `flush_property_edits()` |
+| `history` | `History` | Snapshot-based undo/redo: `VecDeque<(Project, &str)>` stacks, version counter, 100-entry cap | `snapshot()`, `undo()`, `redo()`, `mark_dirty()` |
+| `edit_snapshot_version` | `Option<u64>` | History version when property editing snapshot was taken; ensures DragValue changes accumulate into one undo step | Set in `show_right_panel()`, cleared on selection change / undo / redo |
 
 ### UI State
 
@@ -69,47 +69,48 @@
 | Field | Type | Purpose | Mutated By |
 |-------|------|---------|------------|
 | `last_saved_version` | `u64` | History version at last save | `save_current_project()`, `auto_save()` |
-| `dirty` | `bool` | True if non-history changes need saving (room name edits, service assignments) | Direct mutations, `auto_save()` |
 
 ## State Mutation Patterns
 
-### Pattern 1: Command-Based Mutation (Undoable)
+### Pattern 1: Snapshot-Based Mutation (Undoable)
 
-Used for wall/opening creation, deletion, and property changes.
+Used for wall/opening/label creation, deletion, and canvas actions.
 
 ```
-1. User action (click, Delete key, DragValue commit)
-2. flush_property_edits() — commit pending panel edits first
-3. history.push(Box::new(SomeCommand { ... }), &mut project)
-   → cmd.execute() modifies project
-   → cmd stored in undo_stack
-   → redo_stack cleared
-   → version++
+1. User action (click, Delete key)
+2. history.snapshot(&project, "description")
+   → project cloned to undo_stack (VecDeque, 100-entry cap)
+   → redo_stack cleared, version incremented
+3. Direct mutation via Project methods:
+   → project.add_wall(wall, junction_target, start_junction_target)
+   → project.remove_wall(id) / project.remove_opening(id) / project.remove_label(id)
+   → project.add_opening(opening)
+   → project.labels.push(label)
 4. auto_save() detects version change → saves
 ```
 
-### Pattern 2: Deferred Edit Snapshots (Property Panel)
+### Pattern 2: Batched Property Edits (Single Undo Step)
 
 Used for wall thickness/height/length and opening dimension edits via DragValue.
 
 ```
-1. User selects wall/opening → snapshot captured (wall_edit_snapshot / opening_edit_snapshot)
-2. User drags DragValue → direct mutation of project.walls[i].thickness etc.
-3. On selection change or before next command: flush_property_edits()
-   → Compare current values vs snapshot
-   → If changed: push ModifyWallCommand/ModifyOpeningCommand (already-applied)
-   → Snapshot cleared
+1. User selects wall/opening/label → show_right_panel()
+2. If edit_snapshot_version != history.version:
+   → history.snapshot(&project, "edit properties")
+   → edit_snapshot_version = Some(history.version)
+3. User drags DragValue → direct mutation of project fields (wall.thickness, etc.)
+4. All changes accumulate under one snapshot until selection changes or undo/redo resets
 ```
 
-### Pattern 3: Direct Mutation (Non-Undoable, Dirty Flag)
+### Pattern 3: Direct Mutation (Non-Undoable, Version Bump)
 
 Used for room names, service assignments, service picker.
 
 ```
 1. User edits room name or assigns/removes service
 2. Direct mutation of project fields
-3. self.dirty = true
-4. auto_save() checks dirty flag → saves
+3. self.history.mark_dirty() → bumps version without snapshot
+4. auto_save() detects version change → saves
 ```
 
 ### Pattern 4: Room Detection (Computed, Every Frame)
@@ -130,7 +131,7 @@ Used for room names, service assignments, service picker.
 
 ```
 draw_walls():   reads project.walls, editor.canvas, editor.selection, label_scale
-draw_openings(): reads project.openings, project.walls, editor.canvas, editor.selection, label_scale
+draw_openings(): reads project.openings, project.walls, editor.canvas, editor.selection, editor.orphan_positions, label_scale
 draw_rooms():   reads project.rooms, project.walls (via compute_room_metrics), label_scale
 ```
 
@@ -143,6 +144,7 @@ show_right_panel():
     Opening(id) → mutable borrow of project.openings[id] for DragValue editors
     Room(id)    → mutable borrow of project.rooms[id] for name TextEdit
                   read-only compute_room_metrics for display
+    Label(id)   → mutable borrow of project.labels[id] for text/font/rotation editors
 ```
 
 ### Services Panel (read project, write services)
@@ -160,12 +162,12 @@ show_flat_services():
 
 ## Key State Invariants
 
-1. **`wall.openings` mirrors `opening.wall_id`**: Every opening with `wall_id = Some(wid)` must have its `id` in `walls[wid].openings`, and vice versa. Commands maintain this bidirectional link.
+1. **`wall.openings` mirrors `opening.wall_id`**: Every opening with `wall_id = Some(wid)` must have its `id` in `walls[wid].openings`, and vice versa. `Project::add_opening`/`remove_opening`/`remove_wall` maintain this bidirectional link.
 
 2. **Sections match junctions**: `side.sections.len() == side.junctions.len() + 1` after any junction add/remove. Ensured by `recompute_sections()`.
 
 3. **Room wall_ids/wall_sides are parallel**: `room.wall_ids[i]` corresponds to `room.wall_sides[i]`.
 
-4. **History version monotonically increases**: `version` increments on every push, undo, or redo. Used to detect unsaved changes via `last_saved_version`.
+4. **History version monotonically increases**: `version` increments on every snapshot, undo, redo, or mark_dirty. Used to detect unsaved changes via `last_saved_version`.
 
-5. **Edit snapshots are per-selection**: At most one wall snapshot and one opening snapshot exist at a time. They are flushed when selection changes or before any history command.
+5. **Edit snapshot is per-version**: `edit_snapshot_version` ensures at most one snapshot per editing session. Reset on selection change, undo, or redo.

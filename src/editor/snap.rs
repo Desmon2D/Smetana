@@ -1,5 +1,6 @@
+use glam::DVec2;
 use uuid::Uuid;
-use crate::model::{Point2D, Wall, WallSide};
+use crate::model::{Wall, WallSide, project_onto_segment};
 
 /// Screen-space radius (pixels) for snapping to existing wall vertices.
 const VERTEX_SNAP_SCREEN_PX: f64 = 15.0;
@@ -24,7 +25,7 @@ pub enum SnapType {
 /// Result of a snap operation: the snapped world position and what it snapped to.
 #[derive(Debug, Clone)]
 pub struct SnapResult {
-    pub position: Point2D,
+    pub position: DVec2,
     pub snap_type: SnapType,
 }
 
@@ -32,7 +33,7 @@ pub struct SnapResult {
 ///
 /// Priority: vertex snap > grid snap. Shift disables all snapping.
 pub fn snap(
-    world_pos: Point2D,
+    world_pos: DVec2,
     grid_step: f64,
     zoom: f32,
     walls: &[Wall],
@@ -52,7 +53,7 @@ pub fn snap(
 
     for wall in walls {
         for endpoint in [wall.start, wall.end] {
-            let dist = world_pos.distance_to(endpoint);
+            let dist = world_pos.distance(endpoint);
             if dist < snap_radius_world && dist < closest_dist {
                 closest_dist = dist;
                 closest_vertex = Some(endpoint);
@@ -69,27 +70,24 @@ pub fn snap(
 
     // Wall edge snap: check proximity to wall side edges (for T-junctions)
     let mut closest_edge_dist = f64::MAX;
-    let mut closest_edge: Option<(Uuid, WallSide, f64, Point2D)> = None;
+    let mut closest_edge: Option<(Uuid, WallSide, f64, DVec2)> = None;
 
     for wall in walls {
-        let dx = wall.end.x - wall.start.x;
-        let dy = wall.end.y - wall.start.y;
-        let len = (dx * dx + dy * dy).sqrt();
+        let d = wall.end - wall.start;
+        let len = d.length();
         if len < 1.0 {
             continue;
         }
         let half_t = wall.thickness / 2.0;
-        // Left normal: (-dy/len, dx/len) * half_thickness
-        let lnx = -dy / len * half_t;
-        let lny = dx / len * half_t;
+        let normal = DVec2::new(-d.y / len, d.x / len) * half_t;
 
         for (side, sign) in [(WallSide::Left, 1.0), (WallSide::Right, -1.0)] {
-            let edge_start = Point2D::new(wall.start.x + lnx * sign, wall.start.y + lny * sign);
-            let edge_end = Point2D::new(wall.end.x + lnx * sign, wall.end.y + lny * sign);
-            let (t, proj) = world_pos.project_onto_segment(edge_start, edge_end);
+            let edge_start = wall.start + normal * sign;
+            let edge_end = wall.end + normal * sign;
+            let (t, proj) = project_onto_segment(world_pos, edge_start, edge_end);
             // Only snap to interior of edge (not endpoints)
             if t > 0.01 && t < 0.99 {
-                let dist = world_pos.distance_to(proj);
+                let dist = world_pos.distance(proj);
                 if dist < snap_radius_world && dist < closest_edge_dist {
                     closest_edge_dist = dist;
                     closest_edge = Some((wall.id, side, t, proj));
@@ -106,17 +104,17 @@ pub fn snap(
     }
 
     // Grid snap: round to nearest grid intersection
-    let snapped = Point2D {
-        x: (world_pos.x / grid_step).round() * grid_step,
-        y: (world_pos.y / grid_step).round() * grid_step,
-    };
+    let snapped = DVec2::new(
+        (world_pos.x / grid_step).round() * grid_step,
+        (world_pos.y / grid_step).round() * grid_step,
+    );
 
     // Final pass: if a vertex is within 1mm of the grid-snapped position,
     // prefer the vertex to avoid phantom walls from float rounding.
     const VERTEX_EPSILON_MM: f64 = 1.0;
     for wall in walls {
         for endpoint in [wall.start, wall.end] {
-            if snapped.distance_to(endpoint) < VERTEX_EPSILON_MM {
+            if snapped.distance(endpoint) < VERTEX_EPSILON_MM {
                 return SnapResult {
                     position: endpoint,
                     snap_type: SnapType::Vertex,

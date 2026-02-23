@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use eframe::egui;
 
 use crate::model::{AssignedService, Project, TargetObjectType, UnitType, Wall, WallSide};
-use super::{App, ServiceTarget};
+use super::{App, SECTION_COLORS, ServiceTarget};
 
 pub(super) struct AssignedServiceRow {
     pub name: String,
@@ -108,15 +108,6 @@ impl App {
         side_label: &str,
         color_offset: usize,
     ) {
-        const SECTION_COLORS: &[(u8, u8, u8)] = &[
-            (100, 180, 240),
-            (240, 160, 100),
-            (100, 220, 140),
-            (220, 120, 220),
-            (240, 220, 100),
-            (120, 220, 220),
-        ];
-
         ui.label(side_label);
 
         let section_count = self.project.walls.iter()
@@ -190,7 +181,7 @@ impl App {
                 let section = side_svcs.ensure_section(sec_idx);
                 if idx < section.len() {
                     section.remove(idx);
-                    self.dirty = true;
+                    self.history.mark_dirty();
                 }
             }
 
@@ -210,11 +201,11 @@ impl App {
                             if (new_price - row.template_price).abs() < 0.01 {
                                 if section[i].custom_price.is_some() {
                                     section[i].custom_price = None;
-                                    self.dirty = true;
+                                    self.history.mark_dirty();
                                 }
                             } else if (new_price - row.effective_price).abs() > 0.001 {
                                 section[i].custom_price = Some(new_price);
-                                self.dirty = true;
+                                self.history.mark_dirty();
                             }
                         }
                     }
@@ -247,7 +238,7 @@ impl App {
             let svcs = services_map(&mut self.project).entry(obj_id).or_default();
             if idx < svcs.len() {
                 svcs.remove(idx);
-                self.dirty = true;
+                self.history.mark_dirty();
             }
         }
 
@@ -262,11 +253,11 @@ impl App {
                     if (new_price - row.template_price).abs() < 0.01 {
                         if svcs[i].custom_price.is_some() {
                             svcs[i].custom_price = None;
-                            self.dirty = true;
+                            self.history.mark_dirty();
                         }
                     } else if (new_price - row.effective_price).abs() > 0.001 {
                         svcs[i].custom_price = Some(new_price);
-                        self.dirty = true;
+                        self.history.mark_dirty();
                     }
                 }
             }

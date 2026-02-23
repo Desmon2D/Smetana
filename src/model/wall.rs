@@ -1,5 +1,25 @@
+use glam::DVec2;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// Distance from point `p` to the line segment from `a` to `b`.
+pub fn distance_to_segment(p: DVec2, a: DVec2, b: DVec2) -> f64 {
+    let (_, proj) = project_onto_segment(p, a, b);
+    p.distance(proj)
+}
+
+/// Project point `p` onto the line segment from `a` to `b`.
+/// Returns (t, projected_point) where t is in [0, 1].
+pub fn project_onto_segment(p: DVec2, a: DVec2, b: DVec2) -> (f64, DVec2) {
+    let ab = b - a;
+    let len_sq = ab.length_squared();
+    if len_sq < 1e-12 {
+        return (0.0, a);
+    }
+    let t = (p - a).dot(ab) / len_sq;
+    let t = t.clamp(0.0, 1.0);
+    (t, a + ab * t)
+}
 
 /// A T-junction on one side of a wall.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,45 +42,6 @@ impl SectionData {
     /// Gross area in mm² (trapezoid formula).
     pub fn gross_area(&self) -> f64 {
         self.length * (self.height_start + self.height_end) / 2.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Point2D {
-    /// X coordinate in world space (mm)
-    pub x: f64,
-    /// Y coordinate in world space (mm)
-    pub y: f64,
-}
-
-impl Point2D {
-    pub fn new(x: f64, y: f64) -> Self {
-        Self { x, y }
-    }
-
-    pub fn distance_to(self, other: Point2D) -> f64 {
-        ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
-    }
-
-    /// Distance from this point to the line segment from `a` to `b`.
-    pub fn distance_to_segment(self, a: Point2D, b: Point2D) -> f64 {
-        let (_t, proj) = self.project_onto_segment(a, b);
-        self.distance_to(proj)
-    }
-
-    /// Project this point onto the line segment from `a` to `b`.
-    /// Returns (t, projected_point) where t is in [0, 1].
-    pub fn project_onto_segment(self, a: Point2D, b: Point2D) -> (f64, Point2D) {
-        let ab_x = b.x - a.x;
-        let ab_y = b.y - a.y;
-        let len_sq = ab_x * ab_x + ab_y * ab_y;
-        if len_sq < 1e-12 {
-            return (0.0, a);
-        }
-        let t = ((self.x - a.x) * ab_x + (self.y - a.y) * ab_y) / len_sq;
-        let t = t.clamp(0.0, 1.0);
-        let proj = Point2D::new(a.x + t * ab_x, a.y + t * ab_y);
-        (t, proj)
     }
 }
 
@@ -263,9 +244,9 @@ impl SideData {
 pub struct Wall {
     pub id: Uuid,
     /// Start point in world coordinates (mm)
-    pub start: Point2D,
+    pub start: DVec2,
     /// End point in world coordinates (mm)
-    pub end: Point2D,
+    pub end: DVec2,
     /// Wall thickness (mm)
     pub thickness: f64,
     /// Left side looking from start to end
@@ -277,8 +258,8 @@ pub struct Wall {
 }
 
 impl Wall {
-    pub fn new(start: Point2D, end: Point2D, thickness: f64, height: f64) -> Self {
-        let length = start.distance_to(end);
+    pub fn new(start: DVec2, end: DVec2, thickness: f64, height: f64) -> Self {
+        let length = start.distance(end);
         Self {
             id: Uuid::new_v4(),
             start,
@@ -292,7 +273,7 @@ impl Wall {
 
     /// Wall centerline length in mm (for canvas rendering)
     pub fn length(&self) -> f64 {
-        self.start.distance_to(self.end)
+        self.start.distance(self.end)
     }
 
     /// Gross area of the left side in mm²

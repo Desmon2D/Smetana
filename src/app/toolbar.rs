@@ -64,10 +64,10 @@ impl App {
             self.refresh_project_list();
             self.screen = AppScreen::ProjectList;
         } else if ctrl_z {
-            self.flush_property_edits();
+            self.edit_snapshot_version = None;
             self.history.undo(&mut self.project);
         } else if ctrl_y || ctrl_shift_z {
-            self.flush_property_edits();
+            self.edit_snapshot_version = None;
             self.history.redo(&mut self.project);
         }
 
@@ -111,14 +111,14 @@ impl App {
                     .add_enabled(self.history.can_undo(), egui::Button::new("Отменить"))
                     .clicked()
                 {
-                    self.flush_property_edits();
+                    self.edit_snapshot_version = None;
                     self.history.undo(&mut self.project);
                 }
                 if ui
                     .add_enabled(self.history.can_redo(), egui::Button::new("Повторить"))
                     .clicked()
                 {
-                    self.flush_property_edits();
+                    self.edit_snapshot_version = None;
                     self.history.redo(&mut self.project);
                 }
 
@@ -309,7 +309,7 @@ impl App {
                 show_defaults_form(ui, &mut self.project.defaults);
             });
         if self.project.defaults != before {
-            self.dirty = true;
+            self.history.mark_dirty();
         }
         if !open {
             self.show_project_settings = false;

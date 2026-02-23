@@ -18,7 +18,7 @@
 │  ├── canvas_draw.rs ──── two-pass wall/opening/room rendering   │
 │  ├── project_list.rs ─── ProjectList screen (startup)           │
 │  ├── properties_panel.rs  right panel: wall/opening/room props  │
-│  ├── property_edits.rs ── flush edits → history commands        │
+│  ├── property_edits.rs ── validation helpers, section editors   │
 │  ├── price_list.rs ────── price list CRUD window                │
 │  ├── service_picker.rs ── service assignment picker dialog      │
 │  └── services_panel.rs ── assigned services display + helpers   │
@@ -28,23 +28,23 @@
 ┌────────────┐ ┌────────────┐ ┌───────────┐ ┌──────────────┐
 │  editor/   │ │  model/    │ │ history.rs│ │ persistence/ │
 │            │ │            │ │           │ │              │
-│ Canvas     │ │ Wall       │ │ Command   │ │ project_io   │
-│ WallTool   │ │ Opening    │ │ History   │ │ price_io     │
-│ OpeningTool│ │ Room       │ │ (undo/    │ │              │
-│ Snap       │ │ Project    │ │  redo)    │ │ saves/       │
-│ RoomDetect │ │ PriceList  │ │           │ │  projects/   │
-│ RoomMetrics│ │ Quantity   │ │           │ │  prices/     │
-│ WallJoints │ │            │ │           │ │              │
+│ Canvas     │ │ Wall       │ │ History   │ │ project_io   │
+│ WallTool   │ │ Opening    │ │ (snapshot │ │ price_io     │
+│ OpeningTool│ │ Room       │ │  undo/    │ │              │
+│ Snap       │ │ Label      │ │  redo)    │ │ saves/       │
+│ RoomDetect │ │ Project    │ │           │ │  projects/   │
+│ RoomMetrics│ │ PriceList  │ │           │ │  prices/     │
+│ WallJoints │ │ Quantity   │ │           │ │              │
 │ Triangulate│ │            │ │           │ │              │
 └────────────┘ └────────────┘ └───────────┘ └──────────────┘
-                                                    │
-                                                    ▼
-                                            ┌──────────────┐
-                                            │   export/    │
-                                            │  excel.rs    │
-                                            │  excel_sheets│
-                                            │  (.xlsx)     │
-                                            └──────────────┘
+                                                   │
+                                                   ▼
+                                           ┌──────────────┐
+                                           │   export/    │
+                                           │  excel.rs    │
+                                           │  excel_sheets│
+                                           │  (.xlsx)     │
+                                           └──────────────┘
 ```
 
 ## Data Flow: User Input → State Mutation → Rendering
@@ -55,13 +55,13 @@
 1. Screen dispatch
    ├── ProjectList → show_project_list()
    └── Editor:
-       a. update_edit_snapshots()     ← detect selection change, flush pending property edits
-       b. handle_keyboard_shortcuts() ← Ctrl+Z/Y/S/N/O, tool hotkeys V/W/D/O
-       c. show_toolbar()              ← tool selection, undo/redo buttons, save/export
-       d. show_left_panel()           ← project structure tree, room list
-       e. show_right_panel()          ← selected object properties, assigned services
-       f. show_price_list_window_ui() ← floating window for price list CRUD
-       g. show_service_picker_window()← floating dialog for picking a service to assign
+       a. handle_keyboard_shortcuts() ← Ctrl+Z/Y/S/N/O, tool hotkeys V/W/D/O/T
+       b. show_toolbar()              ← tool selection, undo/redo buttons, save/export
+       c. show_left_panel()           ← project structure tree, room list
+       d. show_right_panel()          ← selected object properties, assigned services
+       e. show_price_list_window_ui() ← floating window for price list CRUD
+       f. show_service_picker_window()← floating dialog for picking a service to assign
+       g. show_project_settings_window() ← floating window for project defaults
        h. show_canvas()               ← THE MAIN LOOP (see below)
        i. auto_save()                 ← save project if version changed
 ```
@@ -78,7 +78,7 @@ show_canvas():
      │   ├── Update snap preview (snap() → preview_end, last_snap)
      │   ├── Double-click → reset tool
      │   ├── First click (Idle) → store chain_start, start_snap, chain_start_snap, transition to Drawing
-     │   └── Second click (Drawing) → create Wall, push AddWallCommand to History
+     │   └── Second click (Drawing) → snapshot + project.add_wall(wall, junction_target, start_junction_target)
      │       ├── start_junction_target: computed from start_snap (T-junction at wall's start point)
      │       ├── junction_target: computed from last_snap (T-junction at wall's end point)
      │       ├── Check closing (snapped near chain_start) → close contour
@@ -88,10 +88,12 @@ show_canvas():
      │   ├── Click → hit-test openings, then walls → set Selection
      │   ├── Drag opening → re-attach to wall under cursor
      │   ├── Escape → deselect
-     │   └── Delete → RemoveWallCommand or RemoveOpeningCommand
-     └── Door/Window tool:
-         ├── Hover → find wall under cursor → set hover_wall_id + hover_offset
-         └── Click → create Opening, push AddOpeningCommand
+     │   └── Delete → snapshot + delete_selected()
+     ├── Door/Window tool:
+     │   ├── Hover → find wall under cursor → set hover_wall_id + hover_offset
+     │   └── Click → snapshot + project.add_opening(opening)
+     └── Label tool:
+         └── Click → snapshot + project.labels.push(label)
   5. Room detection: WallGraph::build() (incl. T-junction vertex merge) → detect_rooms() → merge_rooms()
   6. Drawing:
      ├── draw_rooms()          ← triangulated fill + name/area labels
@@ -102,26 +104,24 @@ show_canvas():
   7. Status bar (coordinates + zoom)
 ```
 
-### History / Command Pipeline
+### History / Snapshot Pipeline
 
 ```
 User action (click, drag, property edit)
   │
-  ├── Direct mutation (canvas actions):
-  │   history.push(Box<dyn Command>, &mut project)
-  │   → cmd.execute() modifies project
-  │   → cmd pushed to undo_stack, redo_stack cleared
-  │   → version incremented
+  ├── Canvas actions (undoable):
+  │   history.snapshot(&project, "description")
+  │   → project state cloned to undo_stack (VecDeque, 100-entry cap)
+  │   → redo_stack cleared, version incremented
+  │   → direct mutation via Project methods (add_wall, remove_wall, etc.)
   │
-  └── Property panel edits (DragValue, TextEdit):
-      → Direct mutation of project fields (wall.thickness, etc.)
-      → On selection change or before next command: flush_property_edits()
-        → Compare current values vs snapshot
-        → If changed: history.push_already_applied(ModifyWallCommand)
-        → Snapshot cleared, ready for next edit
+  └── Property panel edits (batched undo):
+      → On first frame of editing: snapshot if edit_snapshot_version != history.version
+      → DragValue mutations go directly to project fields (wall.thickness, etc.)
+      → All changes accumulate into one undo step until selection changes
 
-Undo: history.undo() → cmd.undo(project) → moved to redo_stack
-Redo: history.redo() → cmd.execute(project) → moved to undo_stack
+Undo: history.undo(project) → swap project with undo_stack.pop(), push current to redo_stack
+Redo: history.redo(project) → swap project with redo_stack.pop(), push current to undo_stack
 ```
 
 ### Persistence Pipeline

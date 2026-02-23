@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use super::{Label, Opening, Room, Wall};
+use super::{Label, Opening, Room, Wall, WallSide};
 
 /// Default dimensions used when creating new walls, doors, and windows in this project.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -119,5 +119,67 @@ impl Project {
             room_services: HashMap::new(),
             defaults: ProjectDefaults::default(),
         }
+    }
+
+    /// Add a wall, registering T-junctions on target walls.
+    pub fn add_wall(
+        &mut self,
+        wall: Wall,
+        junction_target: Option<(Uuid, WallSide, f64)>,
+        start_junction_target: Option<(Uuid, WallSide, f64)>,
+    ) {
+        for jt in [&junction_target, &start_junction_target] {
+            if let Some((target_id, side, t)) = jt {
+                if let Some(target) = self.walls.iter_mut().find(|w| w.id == *target_id) {
+                    let sd = match side {
+                        WallSide::Left => &mut target.left_side,
+                        WallSide::Right => &mut target.right_side,
+                    };
+                    sd.add_junction(wall.id, *t);
+                }
+            }
+        }
+        self.walls.push(wall);
+    }
+
+    /// Remove a wall, detaching its openings and cleaning junction references.
+    pub fn remove_wall(&mut self, id: Uuid) {
+        for o in &mut self.openings {
+            if o.wall_id == Some(id) {
+                o.wall_id = None;
+            }
+        }
+        for w in &mut self.walls {
+            w.left_side.remove_junction(id);
+            w.right_side.remove_junction(id);
+        }
+        self.walls.retain(|w| w.id != id);
+    }
+
+    /// Add an opening, linking it to its wall.
+    pub fn add_opening(&mut self, opening: Opening) {
+        if let Some(wid) = opening.wall_id {
+            if let Some(wall) = self.walls.iter_mut().find(|w| w.id == wid) {
+                wall.openings.push(opening.id);
+            }
+        }
+        self.openings.push(opening);
+    }
+
+    /// Remove an opening, unlinking it from its wall.
+    pub fn remove_opening(&mut self, id: Uuid) {
+        if let Some(opening) = self.openings.iter().find(|o| o.id == id) {
+            if let Some(wid) = opening.wall_id {
+                if let Some(wall) = self.walls.iter_mut().find(|w| w.id == wid) {
+                    wall.openings.retain(|oid| *oid != id);
+                }
+            }
+        }
+        self.openings.retain(|o| o.id != id);
+    }
+
+    /// Remove a label by ID.
+    pub fn remove_label(&mut self, id: Uuid) {
+        self.labels.retain(|l| l.id != id);
     }
 }

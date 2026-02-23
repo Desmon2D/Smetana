@@ -2,8 +2,8 @@ use eframe::egui;
 
 use crate::editor::EditorState;
 use crate::editor::EditorTool;
-use crate::history::{History, LabelProps, WallProps};
-use crate::model::{OpeningKind, PriceList, Project, ProjectDefaults, Room, WallSide};
+use crate::history::History;
+use crate::model::{PriceList, Project, ProjectDefaults, Room, WallSide};
 use crate::persistence::{list_project_entries, load_project, save_project, ProjectEntry};
 
 mod canvas;
@@ -15,6 +15,16 @@ mod property_edits;
 mod service_picker;
 mod services_panel;
 mod toolbar;
+
+/// Section color palette shared across canvas rendering, property editors, and services panel.
+const SECTION_COLORS: &[(u8, u8, u8)] = &[
+    (100, 180, 240),
+    (240, 160, 100),
+    (100, 220, 140),
+    (220, 120, 220),
+    (240, 220, 100),
+    (120, 220, 220),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppScreen {
@@ -42,9 +52,7 @@ pub struct App {
     pub project: Project,
     pub editor: EditorState,
     pub history: History,
-    wall_edit_snapshot: Option<(uuid::Uuid, WallProps)>,
-    opening_edit_snapshot: Option<(uuid::Uuid, OpeningKind)>,
-    label_edit_snapshot: Option<(uuid::Uuid, LabelProps)>,
+    edit_snapshot_version: Option<u64>,
     pub price_list: PriceList,
     selected_service_idx: Option<usize>,
     status_message: Option<String>,
@@ -54,7 +62,6 @@ pub struct App {
     service_picker_target: Option<ServiceTarget>,
     price_list_filter: String,
     last_saved_version: u64,
-    dirty: bool,
     label_scale: f32,
 }
 
@@ -74,9 +81,7 @@ impl App {
             project: Project::new("Новый проект".to_string()),
             editor: EditorState::default(),
             history: History::new(),
-            wall_edit_snapshot: None,
-            opening_edit_snapshot: None,
-            label_edit_snapshot: None,
+            edit_snapshot_version: None,
             price_list: PriceList::new("Прайс-лист".to_string()),
             selected_service_idx: None,
             status_message: None,
@@ -86,7 +91,6 @@ impl App {
             service_picker_target: None,
             price_list_filter: String::new(),
             last_saved_version: 0,
-            dirty: false,
             label_scale: 1.0,
         }
     }
@@ -103,12 +107,9 @@ impl App {
                 self.project = project;
                 self.editor = EditorState::default();
                 self.history = History::new();
-                self.wall_edit_snapshot = None;
-                self.opening_edit_snapshot = None;
-                self.label_edit_snapshot = None;
+                self.edit_snapshot_version = None;
                 self.status_message = None;
                 self.last_saved_version = 0;
-                self.dirty = false;
                 self.screen = AppScreen::Editor;
             }
             Err(e) => {
@@ -121,7 +122,6 @@ impl App {
         match save_project(&self.project) {
             Ok(path) => {
                 self.last_saved_version = self.history.version;
-                self.dirty = false;
                 self.status_message =
                     Some(format!("Проект сохранён: {}", path.display()));
             }
@@ -132,10 +132,9 @@ impl App {
     }
 
     fn auto_save(&mut self) {
-        if self.history.version != self.last_saved_version || self.dirty {
+        if self.history.version != self.last_saved_version {
             if save_project(&self.project).is_ok() {
                 self.last_saved_version = self.history.version;
-                self.dirty = false;
             }
         }
     }
@@ -147,12 +146,9 @@ impl App {
         self.project = project;
         self.editor = EditorState::default();
         self.history = History::new();
-        self.wall_edit_snapshot = None;
-        self.opening_edit_snapshot = None;
-        self.label_edit_snapshot = None;
+        self.edit_snapshot_version = None;
         self.status_message = None;
         self.last_saved_version = 0;
-        self.dirty = false;
         self.screen = AppScreen::Editor;
     }
 
@@ -196,6 +192,26 @@ impl App {
         self.project.rooms = merged;
     }
 
+    fn delete_selected(&mut self) {
+        use crate::editor::Selection;
+        match self.editor.selection {
+            Selection::Wall(id) => {
+                self.history.snapshot(&self.project, "delete wall");
+                self.project.remove_wall(id);
+            }
+            Selection::Opening(id) => {
+                self.history.snapshot(&self.project, "delete opening");
+                self.project.remove_opening(id);
+            }
+            Selection::Label(id) => {
+                self.history.snapshot(&self.project, "delete label");
+                self.project.remove_label(id);
+            }
+            _ => return,
+        }
+        self.editor.selection = Selection::None;
+    }
+
     fn set_tool(&mut self, tool: EditorTool) {
         if self.editor.active_tool != tool {
             if self.editor.active_tool == EditorTool::Wall {
@@ -211,7 +227,6 @@ impl eframe::App for App {
         match self.screen {
             AppScreen::ProjectList => self.show_project_list(ctx),
             AppScreen::Editor => {
-                self.update_edit_snapshots();
                 self.handle_keyboard_shortcuts(ctx);
                 self.show_toolbar(ctx);
                 self.show_left_panel(ctx);

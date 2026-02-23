@@ -1,5 +1,5 @@
+use glam::DVec2;
 use crate::editor::snap::SnapResult;
-use crate::model::Point2D;
 
 /// State machine for the wall drawing tool.
 #[derive(Debug, Clone)]
@@ -7,16 +7,16 @@ pub enum WallToolState {
     /// Waiting for the user to click the first point.
     Idle,
     /// First point placed; waiting for second click to complete the wall.
-    Drawing { start: Point2D },
+    Drawing { start: DVec2 },
 }
 
 /// Wall drawing tool: two-click wall creation with chaining.
 pub struct WallTool {
     pub state: WallToolState,
     /// Current snapped cursor position (updated every frame for preview).
-    pub preview_end: Option<Point2D>,
+    pub preview_end: Option<DVec2>,
     /// The very first point of the current chain (for contour closing detection).
-    pub chain_start: Option<Point2D>,
+    pub chain_start: Option<DVec2>,
     /// The last snap result (for determining T-junction attachment on click).
     pub last_snap: Option<SnapResult>,
     /// Snap result from the first click (start point). Stored separately so that
@@ -52,7 +52,7 @@ impl WallTool {
     }
 
     /// Continue chaining from the given endpoint.
-    pub fn chain_from(&mut self, point: Point2D) {
+    pub fn chain_from(&mut self, point: DVec2) {
         self.state = WallToolState::Drawing { start: point };
         // chain_start stays as the original starting vertex
     }

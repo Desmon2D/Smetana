@@ -1,10 +1,11 @@
-use crate::model::{Point2D, Room, Wall, WallSide};
+use glam::DVec2;
+use crate::model::{Room, Wall, WallSide, project_onto_segment};
 
 /// Computed metrics for a room.
 #[derive(Debug, Clone)]
 pub struct RoomMetrics {
     /// Inner polygon vertices (wall centerlines offset inward by half-thickness)
-    pub inner_polygon: Vec<Point2D>,
+    pub inner_polygon: Vec<DVec2>,
     /// Gross floor area in mm² (centerline polygon — includes wall volume)
     pub gross_area: f64,
     /// Net floor area in mm² (interior polygon — clear floor area)
@@ -28,7 +29,7 @@ pub fn compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics> 
     let has_segments = room.wall_segments.len() == room.wall_ids.len();
 
     // Build offset lines for each wall (inner polygon)
-    let mut offset_segments: Vec<(Point2D, Point2D)> = Vec::new();
+    let mut offset_segments: Vec<(DVec2, DVec2)> = Vec::new();
 
     for (i, wall_id) in room.wall_ids.iter().enumerate() {
         let wall = walls.iter().find(|w| w.id == *wall_id)?;
@@ -43,35 +44,29 @@ pub fn compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics> 
             (wall.start, wall.end)
         };
 
-        // Wall direction vector (always from wall.start→wall.end for
+        // Wall direction vector (always from wall.start->wall.end for
         // consistent normal orientation regardless of segment extent)
-        let dx = wall.end.x - wall.start.x;
-        let dy = wall.end.y - wall.start.y;
-        let len = (dx * dx + dy * dy).sqrt();
+        let d = wall.end - wall.start;
+        let len = d.length();
         if len < 1e-6 {
             return None;
         }
 
-        // Project segment endpoints onto the wall's centerline. At
-        // T-junctions the graph force-merges a connecting wall's endpoint
-        // to the host wall's centerline vertex, displacing it from the
-        // connecting wall's actual centerline. Any perpendicular component
-        // of that displacement would shift the offset line, producing a
-        // wrong inner polygon. Projecting removes the perpendicular error.
+        // Project segment endpoints onto the wall's centerline.
         let (seg_start, seg_end) = {
-            let (_, ps) = raw_start.project_onto_segment(wall.start, wall.end);
-            let (_, pe) = raw_end.project_onto_segment(wall.start, wall.end);
+            let (_, ps) = project_onto_segment(raw_start, wall.start, wall.end);
+            let (_, pe) = project_onto_segment(raw_end, wall.start, wall.end);
             (ps, pe)
         };
 
         // Unit normal pointing toward room interior
-        let (nx, ny) = match side {
-            WallSide::Left => (-dy / len, dx / len),
-            WallSide::Right => (dy / len, -dx / len),
+        let normal = match side {
+            WallSide::Left => DVec2::new(-d.y / len, d.x / len),
+            WallSide::Right => DVec2::new(d.y / len, -d.x / len),
         };
 
-        let offset_start = Point2D::new(seg_start.x + nx * half_t, seg_start.y + ny * half_t);
-        let offset_end = Point2D::new(seg_end.x + nx * half_t, seg_end.y + ny * half_t);
+        let offset_start = seg_start + normal * half_t;
+        let offset_end = seg_end + normal * half_t;
 
         offset_segments.push((offset_start, offset_end));
     }
@@ -154,18 +149,17 @@ pub fn compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics> 
 }
 
 /// Project a point onto a wall's centerline and return the parametric t value.
-fn project_t(point: Point2D, wall: &Wall) -> f64 {
-    let dx = wall.end.x - wall.start.x;
-    let dy = wall.end.y - wall.start.y;
-    let len_sq = dx * dx + dy * dy;
+fn project_t(point: DVec2, wall: &Wall) -> f64 {
+    let d = wall.end - wall.start;
+    let len_sq = d.length_squared();
     if len_sq < 1e-12 {
         return 0.0;
     }
-    ((point.x - wall.start.x) * dx + (point.y - wall.start.y) * dy) / len_sq
+    (point - wall.start).dot(d) / len_sq
 }
 
 /// Shoelace formula — absolute area of a simple polygon.
-fn shoelace_area(polygon: &[Point2D]) -> f64 {
+fn shoelace_area(polygon: &[DVec2]) -> f64 {
     let mut area = 0.0;
     let n = polygon.len();
     for i in 0..n {
@@ -196,10 +190,7 @@ fn centerline_area(room: &Room, walls: &[Wall]) -> Option<f64> {
             // in the room cycle).  Use midpoint for robustness.
             let seg_i_end = room.wall_segments[i].1;
             let seg_j_start = room.wall_segments[j].0;
-            vertices.push(Point2D::new(
-                (seg_i_end.x + seg_j_start.x) / 2.0,
-                (seg_i_end.y + seg_j_start.y) / 2.0,
-            ));
+            vertices.push((seg_i_end + seg_j_start) / 2.0);
         } else {
             // Legacy fallback: find closest endpoint pair between walls
             let wall_i = walls.iter().find(|w| w.id == room.wall_ids[i])?;
@@ -215,8 +206,8 @@ fn centerline_area(room: &Room, walls: &[Wall]) -> Option<f64> {
             let &(best_pt, _) = candidates
                 .iter()
                 .min_by(|(a1, b1), (a2, b2)| {
-                    a1.distance_to(*b1)
-                        .partial_cmp(&a2.distance_to(*b2))
+                    a1.distance(*b1)
+                        .partial_cmp(&a2.distance(*b2))
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })?;
 
@@ -228,12 +219,7 @@ fn centerline_area(room: &Room, walls: &[Wall]) -> Option<f64> {
 }
 
 /// Total cross-section area of column/partition walls inside the room.
-///
-/// A column wall is a wall that is NOT part of the room's boundary contour
-/// but whose midpoint lies inside the room's inner polygon. Both sides of
-/// such a wall face the room interior, so its cross-section (length × thickness)
-/// is subtracted from the net floor area.
-fn column_wall_area(room: &Room, walls: &[Wall], inner_polygon: &[Point2D]) -> f64 {
+fn column_wall_area(room: &Room, walls: &[Wall], inner_polygon: &[DVec2]) -> f64 {
     use std::collections::HashSet;
 
     if inner_polygon.len() < 3 {
@@ -248,10 +234,7 @@ fn column_wall_area(room: &Room, walls: &[Wall], inner_polygon: &[Point2D]) -> f
             continue;
         }
 
-        let mid = Point2D::new(
-            (wall.start.x + wall.end.x) / 2.0,
-            (wall.start.y + wall.end.y) / 2.0,
-        );
+        let mid = (wall.start + wall.end) / 2.0;
 
         if point_in_polygon(mid, inner_polygon) {
             total += wall.length() * wall.thickness;
@@ -262,7 +245,7 @@ fn column_wall_area(room: &Room, walls: &[Wall], inner_polygon: &[Point2D]) -> f
 }
 
 /// Ray-casting point-in-polygon test.
-fn point_in_polygon(point: Point2D, polygon: &[Point2D]) -> bool {
+fn point_in_polygon(point: DVec2, polygon: &[DVec2]) -> bool {
     let n = polygon.len();
     let mut inside = false;
     let mut j = n - 1;
@@ -285,17 +268,13 @@ fn point_in_polygon(point: Point2D, polygon: &[Point2D]) -> bool {
 
 /// Intersect two infinite lines defined by points (a1,a2) and (b1,b2).
 /// Returns None if lines are parallel.
-fn line_intersection(a1: Point2D, a2: Point2D, b1: Point2D, b2: Point2D) -> Option<Point2D> {
-    let d1x = a2.x - a1.x;
-    let d1y = a2.y - a1.y;
-    let d2x = b2.x - b1.x;
-    let d2y = b2.y - b1.y;
-
-    let denom = d1x * d2y - d1y * d2x;
+fn line_intersection(a1: DVec2, a2: DVec2, b1: DVec2, b2: DVec2) -> Option<DVec2> {
+    let d1 = a2 - a1;
+    let d2 = b2 - b1;
+    let denom = d1.perp_dot(d2);
     if denom.abs() < 1e-10 {
         return None;
     }
-
-    let t = ((b1.x - a1.x) * d2y - (b1.y - a1.y) * d2x) / denom;
-    Some(Point2D::new(a1.x + t * d1x, a1.y + t * d1y))
+    let t = (b1 - a1).perp_dot(d2) / denom;
+    Some(a1 + d1 * t)
 }

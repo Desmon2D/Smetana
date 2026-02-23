@@ -80,7 +80,7 @@ impl App {
                         WallSide::Right => &mut wall_svcs.right,
                     };
                     side_svcs.ensure_section(section_index).push(new_svc);
-                    self.dirty = true;
+                    self.history.mark_dirty();
                 }
                 Some(ServiceTarget::Opening { opening_id }) => {
                     self.project
@@ -88,7 +88,7 @@ impl App {
                         .entry(opening_id)
                         .or_default()
                         .push(new_svc);
-                    self.dirty = true;
+                    self.history.mark_dirty();
                 }
                 Some(ServiceTarget::Room { room_id }) => {
                     self.project
@@ -96,7 +96,7 @@ impl App {
                         .entry(room_id)
                         .or_default()
                         .push(new_svc);
-                    self.dirty = true;
+                    self.history.mark_dirty();
                 }
                 None => {}
             }

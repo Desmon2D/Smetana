@@ -31,20 +31,23 @@
 | `uuid` | 1 (features: `v4`, `serde`) | Unique identifiers for all model objects (walls, openings, rooms, services) |
 | `rfd` | 0.15 | Native file dialogs (open/save for projects, price lists, Excel export) |
 | `rust_xlsxwriter` | 0.93 | Excel .xlsx file generation (3-sheet report: rooms, doors, estimate) |
+| `glam` | 0.29 | Math library for `DVec2` world-space coordinates (replaces custom `Point2D`) |
+| `earcutr` | 0.4 | Earcut triangulation algorithm for room fill rendering |
+| `chrono` | 0.4 | Date formatting for Excel export headers |
 
 ## Platform Notes
 
 - **Windows-only target**: Uses `eframe` with native WGL/EGL backend via `glutin`. No cross-platform CI configured.
 - **File paths**: Project saves go to `saves/projects/{name}.json` and price lists to `saves/prices/{name}.json` relative to the working directory.
-- **Auto-save**: Saves on every frame where the history version has changed or `dirty` flag is set. No debouncing.
+- **Auto-save**: Saves on every frame where the history version has changed (compared via `last_saved_version`). No debouncing.
 - **No external runtime dependencies**: Everything is statically linked via Cargo.
 
 ## Tests
 
 | Test | File | Description |
 |------|------|-------------|
-| `round_trip_project_with_wall` | `src/persistence/project_io.rs:103` | Saves a project with one wall, loads it back, verifies all fields match |
-| `round_trip_price_list` | `src/persistence/price_io.rs:47` | Saves a price list with two services, loads it back, verifies fields |
+| `round_trip_project_with_wall` | `src/persistence/project_io.rs` | Saves a project with one wall, loads it back, verifies all fields match |
+| `round_trip_price_list` | `src/persistence/price_io.rs` | Saves a price list with two services, loads it back, verifies fields |
 
 Both tests create temporary files in `saves/` and clean up after themselves.
 

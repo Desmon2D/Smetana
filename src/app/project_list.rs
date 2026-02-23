@@ -5,53 +5,9 @@ use crate::persistence::delete_project;
 use super::App;
 use super::toolbar::show_defaults_form;
 
-enum ProjectListAction {
-    Open(usize),
-}
-
 fn format_system_time(t: std::time::SystemTime) -> String {
-    match t.duration_since(std::time::UNIX_EPOCH) {
-        Ok(dur) => {
-            let secs = dur.as_secs();
-            let days = secs / 86400;
-            let time_of_day = secs % 86400;
-            let hours = time_of_day / 3600;
-            let minutes = (time_of_day % 3600) / 60;
-            let (year, month, day) = days_to_ymd(days);
-            format!("{day:02}.{month:02}.{year} {hours:02}:{minutes:02}")
-        }
-        Err(_) => "—".to_string(),
-    }
-}
-
-fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
-    let mut year = 1970;
-    loop {
-        let days_in_year = if is_leap(year) { 366 } else { 365 };
-        if days < days_in_year {
-            break;
-        }
-        days -= days_in_year;
-        year += 1;
-    }
-    let month_days: [u64; 12] = if is_leap(year) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-    let mut month = 1;
-    for &md in &month_days {
-        if days < md {
-            break;
-        }
-        days -= md;
-        month += 1;
-    }
-    (year, month, days + 1)
-}
-
-fn is_leap(y: u64) -> bool {
-    y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+    let dt: chrono::DateTime<chrono::Local> = t.into();
+    dt.format("%d.%m.%Y %H:%M").to_string()
 }
 
 impl App {
@@ -109,7 +65,7 @@ impl App {
                         ui.strong("");
                         ui.end_row();
 
-                        let mut action: Option<ProjectListAction> = None;
+                        let mut open_idx: Option<usize> = None;
 
                         for (i, entry) in self.project_entries.iter().enumerate() {
                             let is_selected = self.project_list_selection == Some(i);
@@ -126,7 +82,7 @@ impl App {
 
                             ui.horizontal(|ui| {
                                 if ui.button("Открыть").clicked() {
-                                    action = Some(ProjectListAction::Open(i));
+                                    open_idx = Some(i);
                                 }
                                 if ui.button("Удалить").clicked() {
                                     self.confirm_delete = Some(i);
@@ -136,13 +92,9 @@ impl App {
                             ui.end_row();
                         }
 
-                        if let Some(a) = action {
-                            match a {
-                                ProjectListAction::Open(i) => {
-                                    let path = self.project_entries[i].path.clone();
-                                    self.open_project_from_path(&path);
-                                }
-                            }
+                        if let Some(i) = open_idx {
+                            let path = self.project_entries[i].path.clone();
+                            self.open_project_from_path(&path);
                         }
                     });
             });

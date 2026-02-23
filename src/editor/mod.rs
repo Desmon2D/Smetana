@@ -14,6 +14,8 @@ pub use room_detection::WallGraph;
 pub use snap::{SnapResult, SnapType, snap};
 pub use wall_tool::{WallTool, WallToolState};
 
+use std::collections::HashMap;
+use glam::DVec2;
 use uuid::Uuid;
 
 /// The currently active drawing/editing tool.
@@ -43,6 +45,8 @@ pub struct EditorState {
     pub canvas: Canvas,
     pub wall_tool: WallTool,
     pub opening_tool: OpeningTool,
+    /// Transient: world position for openings with wall_id=None (orphaned or dragged off).
+    pub orphan_positions: HashMap<Uuid, DVec2>,
 }
 
 impl Default for EditorState {
@@ -53,6 +57,7 @@ impl Default for EditorState {
             canvas: Canvas::default(),
             wall_tool: WallTool::default(),
             opening_tool: OpeningTool::default(),
+            orphan_positions: HashMap::new(),
         }
     }
 }

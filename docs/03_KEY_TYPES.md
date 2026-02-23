@@ -2,19 +2,13 @@
 
 ## Model Types (serde-serializable)
 
-### `Point2D` — `src/model/wall.rs:29`
+### Coordinate Type — `glam::DVec2`
 
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Point2D {
-    pub x: f64,  // World X in mm
-    pub y: f64,  // World Y in mm
-}
-```
+All world-space coordinates use `glam::DVec2` (re-exported from the `glam` crate). All geometry is in millimeters. Free functions in `model/wall.rs`:
+- `distance_to_segment(p: DVec2, a: DVec2, b: DVec2) -> f64` — distance from point to line segment
+- `project_onto_segment(p: DVec2, a: DVec2, b: DVec2) -> (f64, DVec2)` — project onto segment, returns (t, projected_point)
 
-Used everywhere for world-space coordinates. All geometry is in millimeters.
-
-### `SideJunction` — `src/model/wall.rs:6`
+### `SideJunction` — `src/model/wall.rs`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,7 +20,7 @@ pub struct SideJunction {
 
 Represents a T-junction on one side of a wall.
 
-### `SectionData` — `src/model/wall.rs:14`
+### `SectionData` — `src/model/wall.rs`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +33,7 @@ pub struct SectionData {
 
 Properties of a single wall-side section between junctions.
 
-### `SideData` — `src/model/wall.rs:68`
+### `SideData` — `src/model/wall.rs`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,14 +48,14 @@ pub struct SideData {
 
 Complete data for one side (left or right) of a wall, including junction-split sections.
 
-### `Wall` — `src/model/wall.rs:171`
+### `Wall` — `src/model/wall.rs`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Wall {
     pub id: Uuid,
-    pub start: Point2D,             // Start endpoint (mm)
-    pub end: Point2D,               // End endpoint (mm)
+    pub start: DVec2,               // Start endpoint (mm)
+    pub end: DVec2,                 // End endpoint (mm)
     pub thickness: f64,             // Wall thickness (mm, default 200)
     pub left_side: SideData,        // Left side looking start→end
     pub right_side: SideData,       // Right side looking start→end
@@ -69,7 +63,7 @@ pub struct Wall {
 }
 ```
 
-### `OpeningKind` — `src/model/opening.rs:8`
+### `OpeningKind` — `src/model/opening.rs`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,7 +81,7 @@ pub enum OpeningKind {
 }
 ```
 
-### `Opening` — `src/model/opening.rs:66`
+### `Opening` — `src/model/opening.rs`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,11 +90,25 @@ pub struct Opening {
     pub kind: OpeningKind,
     pub wall_id: Option<Uuid>,          // Attached wall (None = detached)
     pub offset_along_wall: f64,         // Center offset from wall start (mm)
-    pub fallback_position: Option<Point2D>,  // World pos when detached
 }
 ```
 
-### `WallSide` — `src/model/room.rs:6`
+Note: `fallback_position` was removed. Detached opening positions are stored transiently in `EditorState.orphan_positions`.
+
+### `Label` — `src/model/label.rs`
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Label {
+    pub id: Uuid,
+    pub text: String,
+    pub position: DVec2,
+    pub font_size: f64,   // Display font size (default 14.0)
+    pub rotation: f64,    // Rotation in radians (default 0.0)
+}
+```
+
+### `WallSide` — `src/model/room.rs`
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,7 +118,7 @@ pub enum WallSide {
 }
 ```
 
-### `Room` — `src/model/room.rs:13`
+### `Room` — `src/model/room.rs`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,7 +130,7 @@ pub struct Room {
 }
 ```
 
-### `ProjectDefaults` — `src/model/project.rs:9`
+### `ProjectDefaults` — `src/model/project.rs`
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -140,7 +148,7 @@ pub struct ProjectDefaults {
 
 Per-project configurable defaults used when creating new walls, doors, and windows. Set at project creation, editable via project settings window.
 
-### `AssignedService` — `src/model/project.rs:43`
+### `AssignedService` — `src/model/project.rs`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,7 +158,7 @@ pub struct AssignedService {
 }
 ```
 
-### `SideServices` — `src/model/project.rs:17`
+### `SideServices` — `src/model/project.rs`
 
 ```rust
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -159,7 +167,7 @@ pub struct SideServices {
 }
 ```
 
-### `WallSideServices` — `src/model/project.rs:43`
+### `WallSideServices` — `src/model/project.rs`
 
 ```rust
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -169,7 +177,7 @@ pub struct WallSideServices {
 }
 ```
 
-### `Project` — `src/model/project.rs:83`
+### `Project` — `src/model/project.rs`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +187,7 @@ pub struct Project {
     pub walls: Vec<Wall>,
     pub openings: Vec<Opening>,
     pub rooms: Vec<Room>,
+    pub labels: Vec<Label>,
     pub price_list_id: Option<Uuid>,
     pub wall_services: HashMap<Uuid, WallSideServices>,
     pub opening_services: HashMap<Uuid, Vec<AssignedService>>,
@@ -187,7 +196,9 @@ pub struct Project {
 }
 ```
 
-### `UnitType` — `src/model/price.rs:5`
+Mutation methods on `Project`: `add_wall()`, `remove_wall()`, `add_opening()`, `remove_opening()`, `remove_label()`.
+
+### `UnitType` — `src/model/price.rs`
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,7 +209,7 @@ pub enum UnitType {
 }
 ```
 
-### `TargetObjectType` — `src/model/price.rs:28`
+### `TargetObjectType` — `src/model/price.rs`
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,7 +221,7 @@ pub enum TargetObjectType {
 }
 ```
 
-### `ServiceTemplate` — `src/model/price.rs:55`
+### `ServiceTemplate` — `src/model/price.rs`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,7 +234,7 @@ pub struct ServiceTemplate {
 }
 ```
 
-### `PriceList` — `src/model/price.rs:81`
+### `PriceList` — `src/model/price.rs`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,7 +249,7 @@ pub struct PriceList {
 
 ## Editor State Types
 
-### `EditorTool` — `src/editor/mod.rs:21`
+### `EditorTool` — `src/editor/mod.rs`
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,12 +258,13 @@ pub enum EditorTool {
     Wall,
     Door,
     Window,
+    Label,
 }
 ```
 
-Hotkeys: V (Select), W (Wall), D (Door), O (Window).
+Hotkeys: V (Select), W (Wall), D (Door), O (Window), T (Label).
 
-### `Selection` — `src/editor/mod.rs:30`
+### `Selection` — `src/editor/mod.rs`
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,10 +273,11 @@ pub enum Selection {
     Wall(Uuid),
     Opening(Uuid),
     Room(Uuid),
+    Label(Uuid),
 }
 ```
 
-### `EditorState` — `src/editor/mod.rs:38`
+### `EditorState` — `src/editor/mod.rs`
 
 ```rust
 pub struct EditorState {
@@ -273,10 +286,11 @@ pub struct EditorState {
     pub canvas: Canvas,
     pub wall_tool: WallTool,
     pub opening_tool: OpeningTool,
+    pub orphan_positions: HashMap<Uuid, DVec2>,  // Transient: world pos for detached openings
 }
 ```
 
-### `Canvas` — `src/editor/canvas.rs:7`
+### `Canvas` — `src/editor/canvas.rs`
 
 ```rust
 pub struct Canvas {
@@ -287,30 +301,30 @@ pub struct Canvas {
 }
 ```
 
-### `WallToolState` — `src/editor/wall_tool.rs:5`
+### `WallToolState` — `src/editor/wall_tool.rs`
 
 ```rust
 #[derive(Debug, Clone)]
 pub enum WallToolState {
     Idle,
-    Drawing { start: Point2D },
+    Drawing { start: DVec2 },
 }
 ```
 
-### `WallTool` — `src/editor/wall_tool.rs:14`
+### `WallTool` — `src/editor/wall_tool.rs`
 
 ```rust
 pub struct WallTool {
     pub state: WallToolState,
-    pub preview_end: Option<Point2D>,
-    pub chain_start: Option<Point2D>,
+    pub preview_end: Option<DVec2>,
+    pub chain_start: Option<DVec2>,
     pub last_snap: Option<SnapResult>,
     pub start_snap: Option<SnapResult>,
     pub chain_start_snap: Option<SnapResult>,
 }
 ```
 
-### `OpeningTool` — `src/editor/opening_tool.rs:7`
+### `OpeningTool` — `src/editor/opening_tool.rs`
 
 ```rust
 pub struct OpeningTool {
@@ -319,7 +333,7 @@ pub struct OpeningTool {
 }
 ```
 
-### `SnapType` — `src/editor/snap.rs:9`
+### `SnapType` — `src/editor/snap.rs`
 
 ```rust
 #[derive(Debug, Clone)]
@@ -335,21 +349,21 @@ pub enum SnapType {
 }
 ```
 
-### `SnapResult` — `src/editor/snap.rs:26`
+### `SnapResult` — `src/editor/snap.rs`
 
 ```rust
 #[derive(Debug, Clone)]
 pub struct SnapResult {
-    pub position: Point2D,
+    pub position: DVec2,
     pub snap_type: SnapType,
 }
 ```
 
-### `RoomMetrics` — `src/editor/room_metrics.rs:5`
+### `RoomMetrics` — `src/editor/room_metrics.rs`
 
 ```rust
 pub struct RoomMetrics {
-    pub inner_polygon: Vec<Point2D>,
+    pub inner_polygon: Vec<DVec2>,
     pub gross_area: f64,   // mm² (centerline polygon)
     pub net_area: f64,     // mm² (interior polygon minus columns)
     pub perimeter: f64,    // mm (sum of room-facing side section lengths)
@@ -360,16 +374,16 @@ pub struct RoomMetrics {
 
 ## Room Detection Types
 
-### `GraphVertex` — `src/editor/room_detection.rs:10`
+### `GraphVertex` — `src/editor/room_detection.rs`
 
 ```rust
 pub struct GraphVertex {
-    pub position: Point2D,
+    pub position: DVec2,
     pub edges: Vec<(usize, Uuid, f64)>,  // (neighbor_idx, wall_id, angle_radians)
 }
 ```
 
-### `WallGraph` — `src/editor/room_detection.rs:19`
+### `WallGraph` — `src/editor/room_detection.rs`
 
 ```rust
 pub struct WallGraph {
@@ -377,7 +391,7 @@ pub struct WallGraph {
 }
 ```
 
-### `DirectedEdge` — `src/editor/room_detection.rs:315`
+### `DirectedEdge` — `src/editor/room_detection.rs`
 
 ```rust
 pub struct DirectedEdge {
@@ -391,7 +405,7 @@ pub struct DirectedEdge {
 
 ## Wall Joint Rendering Types
 
-### `JointVertices` — `src/editor/wall_joints.rs:17`
+### `JointVertices` — `src/editor/wall_joints.rs`
 
 ```rust
 pub struct JointVertices {
@@ -400,7 +414,7 @@ pub struct JointVertices {
 }
 ```
 
-### `HubPolygon` — `src/editor/wall_joints.rs:24`
+### `HubPolygon` — `src/editor/wall_joints.rs`
 
 ```rust
 pub struct HubPolygon {
@@ -409,7 +423,7 @@ pub struct HubPolygon {
 }
 ```
 
-### `WallAtJunction` — `src/editor/wall_joints.rs:31` (pub(super))
+### `WallAtJunction` — `src/editor/wall_joints.rs` (pub(super))
 
 ```rust
 pub(super) struct WallAtJunction {
@@ -425,57 +439,26 @@ pub(super) struct WallAtJunction {
 
 ---
 
-## History / Command Types
+## History Type
 
-### `Command` trait — `src/history.rs:3`
-
-```rust
-pub trait Command {
-    fn execute(&mut self, project: &mut Project);
-    fn undo(&mut self, project: &mut Project);
-    fn description(&self) -> &str;
-}
-```
-
-### `WallProps` — `src/history.rs:173`
-
-```rust
-#[derive(Clone)]
-pub struct WallProps {
-    pub thickness: f64,
-    pub left_side: SideData,
-    pub right_side: SideData,
-}
-```
-
-Snapshot of wall properties for undo/redo of property edits.
-
-### `History` — `src/history.rs:308`
+### `History` — `src/history.rs`
 
 ```rust
 pub struct History {
-    undo_stack: Vec<Box<dyn Command>>,
-    redo_stack: Vec<Box<dyn Command>>,
-    pub version: u64,  // Monotonically increasing, bumped on push/undo/redo
+    undo_stack: VecDeque<(Project, &'static str)>,
+    redo_stack: VecDeque<(Project, &'static str)>,
+    pub version: u64,      // Monotonically increasing, bumped on snapshot/undo/redo/mark_dirty
+    max_entries: usize,    // 100
 }
 ```
 
-### Command Variants
-
-| Struct | File:Line | Mutates |
-|--------|-----------|---------|
-| `AddWallCommand` | `history.rs:11` | Adds wall to `project.walls`, optionally adds junctions to target walls' sides at both the start and end points |
-| `RemoveWallCommand` | `history.rs:75` | Removes wall, detaches openings (sets fallback_position), removes junctions on other walls |
-| `ModifyWallCommand` | `history.rs:166` | Changes wall thickness, left_side, right_side |
-| `AddOpeningCommand` | `history.rs:209` | Adds opening to `project.openings`, links to wall's `openings` list |
-| `RemoveOpeningCommand` | `history.rs:239` | Removes opening from project, unlinks from wall |
-| `ModifyOpeningCommand` | `history.rs:276` | Changes opening kind (dimensions) |
+Snapshot-based undo/redo. `snapshot()` clones the entire `Project` before mutation. `undo()`/`redo()` swap the whole project state. `mark_dirty()` bumps version without storing a snapshot (for non-undoable changes like service edits).
 
 ---
 
 ## UI Types (private to app/)
 
-### `AppScreen` — `src/app/mod.rs:19`
+### `AppScreen` — `src/app/mod.rs`
 
 ```rust
 enum AppScreen {
@@ -484,7 +467,7 @@ enum AppScreen {
 }
 ```
 
-### `ServiceTarget` — `src/app/mod.rs:26`
+### `ServiceTarget` — `src/app/mod.rs`
 
 ```rust
 enum ServiceTarget {
@@ -494,7 +477,7 @@ enum ServiceTarget {
 }
 ```
 
-### `App` — `src/app/mod.rs:32`
+### `App` — `src/app/mod.rs`
 
 See [06_STATE_MANAGEMENT.md](06_STATE_MANAGEMENT.md) for field breakdown.
 
@@ -502,7 +485,7 @@ See [06_STATE_MANAGEMENT.md](06_STATE_MANAGEMENT.md) for field breakdown.
 
 ## Persistence Types
 
-### `ProjectEntry` — `src/persistence/project_io.rs:10`
+### `ProjectEntry` — `src/persistence/project_io.rs`
 
 ```rust
 pub struct ProjectEntry {
@@ -512,7 +495,7 @@ pub struct ProjectEntry {
 }
 ```
 
-### `AssignedServiceRow` — `src/app/services_panel.rs:7` (pub(super))
+### `AssignedServiceRow` — `src/app/services_panel.rs` (pub(super))
 
 ```rust
 pub(super) struct AssignedServiceRow {

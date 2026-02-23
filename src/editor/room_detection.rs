@@ -1,7 +1,8 @@
 use std::collections::HashSet;
+use glam::DVec2;
 use uuid::Uuid;
 
-use crate::model::{Point2D, Room, Wall, WallSide};
+use crate::model::{Room, Wall, WallSide};
 
 /// Tolerance for merging vertices (in mm).
 const MERGE_EPSILON: f64 = 5.0;
@@ -9,7 +10,7 @@ const MERGE_EPSILON: f64 = 5.0;
 /// A vertex in the wall graph, representing a merged endpoint.
 #[derive(Debug, Clone)]
 pub struct GraphVertex {
-    pub position: Point2D,
+    pub position: DVec2,
     /// Adjacent edges sorted by angle from this vertex.
     /// Each entry: (neighbor_vertex_index, wall_id, angle_radians)
     pub edges: Vec<(usize, Uuid, f64)>,
@@ -36,7 +37,7 @@ impl WallGraph {
         }
 
         // Step 1+2: Collect and merge vertices (including junction points)
-        let mut positions: Vec<Point2D> = Vec::new();
+        let mut positions: Vec<DVec2> = Vec::new();
 
         // For each wall, collect all vertices along its length:
         // start, junction points (sorted by t), end.
@@ -62,10 +63,7 @@ impl WallGraph {
 
             // Add intermediate vertices at junction points
             for &t in &junction_ts {
-                let pt = Point2D::new(
-                    wall.start.x + (wall.end.x - wall.start.x) * t,
-                    wall.start.y + (wall.end.y - wall.start.y) * t,
-                );
+                let pt = wall.start + (wall.end - wall.start) * t;
                 let idx = find_or_insert_vertex(&mut positions, pt);
                 verts.push(idx);
             }
@@ -89,14 +87,10 @@ impl WallGraph {
                 .chain(host_wall.right_side.junctions.iter())
             {
                 // Junction vertex on the host wall's centerline
-                let junc_pt = Point2D::new(
-                    host_wall.start.x
-                        + (host_wall.end.x - host_wall.start.x) * junction.t,
-                    host_wall.start.y
-                        + (host_wall.end.y - host_wall.start.y) * junction.t,
-                );
+                let junc_pt = host_wall.start
+                    + (host_wall.end - host_wall.start) * junction.t;
                 let junc_idx =
-                    match positions.iter().position(|p| p.distance_to(junc_pt) < MERGE_EPSILON) {
+                    match positions.iter().position(|p| p.distance(junc_pt) < MERGE_EPSILON) {
                         Some(idx) => idx,
                         None => continue,
                     };
@@ -106,15 +100,15 @@ impl WallGraph {
                     Some(w) => w,
                     None => continue,
                 };
-                let start_dist = conn_wall.start.distance_to(junc_pt);
-                let end_dist = conn_wall.end.distance_to(junc_pt);
+                let start_dist = conn_wall.start.distance(junc_pt);
+                let end_dist = conn_wall.end.distance(junc_pt);
                 let conn_endpoint = if start_dist < end_dist {
                     conn_wall.start
                 } else {
                     conn_wall.end
                 };
                 let conn_idx =
-                    match positions.iter().position(|p| p.distance_to(conn_endpoint) < MERGE_EPSILON)
+                    match positions.iter().position(|p| p.distance(conn_endpoint) < MERGE_EPSILON)
                     {
                         Some(idx) => idx,
                         None => continue,
@@ -181,14 +175,14 @@ impl WallGraph {
         let point = if is_end { wall.end } else { wall.start };
         self.vertices
             .iter()
-            .position(|v| v.position.distance_to(point) < MERGE_EPSILON)
+            .position(|v| v.position.distance(point) < MERGE_EPSILON)
     }
 
     /// Find all minimal cycles (faces) in the planar graph.
     ///
-    /// Uses the minimum-angle traversal: for each directed edge (u→v),
+    /// Uses the minimum-angle traversal: for each directed edge (u->v),
     /// find the next edge at v by picking the one immediately after the
-    /// reverse direction (v→u) in the sorted adjacency list (next CCW turn).
+    /// reverse direction (v->u) in the sorted adjacency list (next CCW turn).
     /// Follow this chain until returning to the start.
     ///
     /// Returns cycles as lists of `DirectedEdge`. The outer boundary
@@ -203,7 +197,7 @@ impl WallGraph {
                     continue;
                 }
 
-                // Trace a cycle starting from directed edge u→v
+                // Trace a cycle starting from directed edge u->v
                 let mut cycle = Vec::new();
                 let mut cur_from = u;
                 let mut cur_to = v;
@@ -223,7 +217,7 @@ impl WallGraph {
                     });
 
                     // At cur_to, find the next edge: the one just after
-                    // the reverse edge (cur_to→cur_from) in CCW order.
+                    // the reverse edge (cur_to->cur_from) in CCW order.
                     match self.next_edge_ccw(cur_to, cur_from) {
                         Some((next_to, next_wall)) => {
                             cur_from = cur_to;
@@ -274,16 +268,13 @@ impl WallGraph {
     /// Given that we arrived at vertex `at` from vertex `from_vertex`,
     /// find the next outgoing edge by choosing the one immediately after
     /// the reverse direction in the CCW-sorted adjacency list.
-    ///
-    /// The reverse edge (at→from_vertex) has some angle θ. We want the
-    /// next edge in the sorted list after this reverse entry.
     fn next_edge_ccw(&self, at: usize, from_vertex: usize) -> Option<(usize, Uuid)> {
         let edges = &self.vertices[at].edges;
         if edges.is_empty() {
             return None;
         }
 
-        // Find the index of the reverse edge (at→from_vertex) in the adjacency
+        // Find the index of the reverse edge (at->from_vertex) in the adjacency
         let reverse_idx = edges.iter().position(|&(nb, _, _)| nb == from_vertex)?;
 
         // The next edge in CCW order is the one just after the reverse,
@@ -308,7 +299,7 @@ impl WallGraph {
     /// Detect rooms from the wall graph.
     ///
     /// Finds minimal cycles, determines wall sides, and returns Room structs.
-    /// Room names are auto-generated as "Комната 1", "Комната 2", etc.
+    /// Room names are auto-generated as "Komhata 1", "Komhata 2", etc.
     pub fn detect_rooms(&self, walls: &[Wall]) -> Vec<Room> {
         let cycles = self.find_minimal_cycles();
         let mut rooms = Vec::new();
@@ -326,7 +317,6 @@ impl WallGraph {
             for edge in cycle {
                 let wall_id = edge.wall_id;
                 // Avoid duplicate wall IDs in the same room
-                // (shouldn't happen in valid minimal cycles, but be safe)
                 if wall_ids.contains(&wall_id) {
                     continue;
                 }
@@ -341,35 +331,17 @@ impl WallGraph {
                 let to_pos = self.vertices[edge.to].position;
 
                 // Use dot product of edge direction with wall direction to
-                // determine forward/backward. This works correctly for
-                // mid-wall segments at T-junctions (where from_pos is not
-                // near wall.start).
-                let wall_dx = wall.end.x - wall.start.x;
-                let wall_dy = wall.end.y - wall.start.y;
-                let edge_dx = to_pos.x - from_pos.x;
-                let edge_dy = to_pos.y - from_pos.y;
-                let dot = wall_dx * edge_dx + wall_dy * edge_dy;
+                // determine forward/backward.
+                let wall_dir = wall.end - wall.start;
+                let edge_dir = to_pos - from_pos;
+                let dot = wall_dir.dot(edge_dir);
                 let forward = dot > 0.0;
 
-                // Wall side determination:
-                // "Left" = left side when looking from wall.start to wall.end
-                //
-                // If edge is forward (same as wall direction):
-                //   interior_is_left => Left side faces interior
-                //   !interior_is_left => Right side faces interior
-                // If edge is backward (opposite to wall direction):
-                //   interior_is_left => Right side faces interior (left of travel = right of wall)
-                //   !interior_is_left => Left side faces interior
                 let side = match (forward, interior_is_left) {
                     (true, true) | (false, false) => WallSide::Left,
                     (true, false) | (false, true) => WallSide::Right,
                 };
 
-                // Store segment endpoints in cycle traversal order so
-                // that seg[i].1 is the shared vertex with the next wall
-                // (needed by centerline_area). The perimeter computation
-                // uses min/max of projected t values, so ordering doesn't
-                // matter there.
                 wall_ids.push(wall_id);
                 wall_sides.push(side);
                 wall_segments.push((from_pos, to_pos));
@@ -398,18 +370,17 @@ pub struct DirectedEdge {
 }
 
 /// Compute the angle in radians from point `from` to point `to`.
-/// Returns a value in [-π, π].
-fn angle_between(from: Point2D, to: Point2D) -> f64 {
-    let dx = to.x - from.x;
-    let dy = to.y - from.y;
-    dy.atan2(dx)
+/// Returns a value in [-pi, pi].
+fn angle_between(from: DVec2, to: DVec2) -> f64 {
+    let d = to - from;
+    d.y.atan2(d.x)
 }
 
 /// Find an existing vertex within MERGE_EPSILON, or insert a new one.
 /// Returns the vertex index.
-fn find_or_insert_vertex(positions: &mut Vec<Point2D>, point: Point2D) -> usize {
+fn find_or_insert_vertex(positions: &mut Vec<DVec2>, point: DVec2) -> usize {
     for (i, existing) in positions.iter().enumerate() {
-        if existing.distance_to(point) < MERGE_EPSILON {
+        if existing.distance(point) < MERGE_EPSILON {
             return i;
         }
     }

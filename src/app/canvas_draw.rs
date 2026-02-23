@@ -2,8 +2,8 @@ use eframe::egui;
 
 use crate::editor::{EditorTool, Selection, SnapType, WallToolState};
 use crate::editor::wall_joints::compute_joints;
-use crate::model::{OpeningKind, Point2D};
-use super::App;
+use crate::model::OpeningKind;
+use super::{App, SECTION_COLORS};
 
 /// Draw text centered at `center_pos`, rotated to follow the wall angle.
 /// The angle is automatically flipped so text is never upside-down.
@@ -59,16 +59,6 @@ impl App {
         };
 
         let (joint_map, hub_polygons) = compute_joints(&self.project.walls, &self.editor.canvas, center);
-
-        // Shared section color palette (matches property_edits.rs and services_panel.rs)
-        const SECTION_COLORS: &[(u8, u8, u8)] = &[
-            (100, 180, 240),
-            (240, 160, 100),
-            (100, 220, 140),
-            (220, 120, 220),
-            (240, 220, 100),
-            (120, 220, 220),
-        ];
 
         // Blend a palette color with the wall gray base to produce a muted opaque fill
         let blend_color = |palette: (u8, u8, u8), factor: f32| -> egui::Color32 {
@@ -355,7 +345,7 @@ impl App {
 
         if let Some(chain_start) = self.editor.wall_tool.chain_start {
             if let WallToolState::Drawing { start } = &self.editor.wall_tool.state {
-                if start.distance_to(chain_start) > 1.0 {
+                if start.distance(chain_start) > 1.0 {
                     let cs_screen = self.editor.canvas.world_to_screen(
                         egui::pos2(chain_start.x as f32, chain_start.y as f32),
                         center,
@@ -383,7 +373,7 @@ impl App {
                     egui::Stroke::new(2.0, preview_color),
                 );
 
-                let length_mm = start.distance_to(end);
+                let length_mm = start.distance(end);
                 if length_mm > 1.0 {
                     let pdx = end_screen.x - start_screen.x;
                     let pdy = end_screen.y - start_screen.y;
@@ -456,7 +446,10 @@ impl App {
                     None => continue,
                 },
                 None => {
-                    let pos = opening.fallback_position.unwrap_or(Point2D::new(0.0, 0.0));
+                    let pos = match self.editor.orphan_positions.get(&opening.id) {
+                        Some(p) => *p,
+                        None => continue,
+                    };
                     let screen_pos = self.editor.canvas.world_to_screen(
                         egui::pos2(pos.x as f32, pos.y as f32), center,
                     );

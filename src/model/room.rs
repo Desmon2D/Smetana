@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::wall::Point2D;
+use glam::DVec2;
 
 /// Which side of a wall faces the room interior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +25,7 @@ pub struct Room {
     /// the room boundary, which may differ from wall.start/wall.end when
     /// T-junctions split walls into segments.
     #[serde(default)]
-    pub wall_segments: Vec<(Point2D, Point2D)>,
+    pub wall_segments: Vec<(DVec2, DVec2)>,
 }
 
 impl Room {
@@ -33,7 +33,7 @@ impl Room {
         name: String,
         wall_ids: Vec<Uuid>,
         wall_sides: Vec<WallSide>,
-        wall_segments: Vec<(Point2D, Point2D)>,
+        wall_segments: Vec<(DVec2, DVec2)>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),

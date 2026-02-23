@@ -96,15 +96,16 @@ pub fn delete_project(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Point2D, Wall};
+    use glam::DVec2;
+    use crate::model::Wall;
     use std::fs;
 
     #[test]
     fn round_trip_project_with_wall() {
         let mut project = Project::new("_test_round_trip".to_string());
         project.walls.push(Wall::new(
-            Point2D::new(0.0, 0.0),
-            Point2D::new(4000.0, 0.0),
+            DVec2::new(0.0, 0.0),
+            DVec2::new(4000.0, 0.0),
             200.0,
             2700.0,
         ));

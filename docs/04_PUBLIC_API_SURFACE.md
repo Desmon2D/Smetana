@@ -1,13 +1,11 @@
 # Public API Surface
 
-## `src/model/wall.rs` — Point2D, SideData, Wall
+## `src/model/wall.rs` — Free Functions, SideData, Wall
 
 | Signature | Purpose |
 |-----------|---------|
-| `Point2D::new(x: f64, y: f64) -> Self` | Create point |
-| `Point2D::distance_to(self, other: Point2D) -> f64` | Euclidean distance |
-| `Point2D::distance_to_segment(self, a: Point2D, b: Point2D) -> f64` | Distance to line segment |
-| `Point2D::project_onto_segment(self, a: Point2D, b: Point2D) -> (f64, Point2D)` | Project onto segment, returns (t, projected_point) |
+| `distance_to_segment(p: DVec2, a: DVec2, b: DVec2) -> f64` | Distance from point to line segment |
+| `project_onto_segment(p: DVec2, a: DVec2, b: DVec2) -> (f64, DVec2)` | Project onto segment, returns (t, projected_point) |
 | `SectionData::gross_area(&self) -> f64` | Section area in mm² (trapezoid formula) |
 | `SideData::new(length: f64, height_start: f64, height_end: f64) -> Self` | Create with one implicit section |
 | `SideData::gross_area(&self) -> f64` | Gross area mm² (trapezoid) |
@@ -17,7 +15,8 @@
 | `SideData::ensure_sections(&mut self)` | Post-deserialization fixup (populates if empty) |
 | `SideData::computed_total_length(&self, walls: &[Wall]) -> f64` | Section lengths + junction wall thicknesses |
 | `SideData::recompute_sections(&mut self)` | Rebuild sections from junction t-values |
-| `Wall::new(start: Point2D, end: Point2D, thickness: f64, height: f64) -> Self` | Create wall with given thickness and height |
+| `SideData::sync_from_sections(&mut self)` | Update total length/height from sections |
+| `Wall::new(start: DVec2, end: DVec2, thickness: f64, height: f64) -> Self` | Create wall with given thickness and height |
 | `Wall::length(&self) -> f64` | Centerline length mm |
 | `Wall::left_area(&self) -> f64` | Left side gross area mm² |
 | `Wall::right_area(&self) -> f64` | Right side gross area mm² |
@@ -34,6 +33,12 @@
 | `Opening::new_door(wall_id: Uuid, offset_along_wall: f64) -> Self` | Create default door |
 | `Opening::new_window(wall_id: Uuid, offset_along_wall: f64) -> Self` | Create default window |
 
+## `src/model/label.rs` — Label
+
+| Signature | Purpose |
+|-----------|---------|
+| `Label::new(text: String, position: DVec2) -> Self` | Create label at position (font_size=14, rotation=0) |
+
 ## `src/model/room.rs` — Room
 
 | Signature | Purpose |
@@ -46,6 +51,11 @@
 |-----------|---------|
 | `ProjectDefaults::default() -> Self` | Standard defaults (wall 200×2700, door 2100×900, window 1400×1200/900/250) |
 | `Project::new(name: String) -> Self` | Create empty project with default `ProjectDefaults` |
+| `Project::add_wall(&mut self, wall, junction_target, start_junction_target)` | Register T-junctions on target walls, push wall |
+| `Project::remove_wall(&mut self, id: Uuid)` | Detach openings, remove junctions from other walls, remove wall |
+| `Project::add_opening(&mut self, opening: Opening)` | Link opening to wall's openings list, push opening |
+| `Project::remove_opening(&mut self, id: Uuid)` | Unlink from wall, remove opening |
+| `Project::remove_label(&mut self, id: Uuid)` | Remove label by ID |
 | `SideServices::ensure_section(&mut self, section_index: usize) -> &mut Vec<AssignedService>` | Ensure section exists, return mutable ref |
 | `SideServices::all_services(&self) -> impl Iterator<Item = &AssignedService>` | Flat iterator over all sections |
 | `SideServices::is_empty(&self) -> bool` | True if no sections have services |
@@ -66,6 +76,7 @@
 | Signature | Purpose |
 |-----------|---------|
 | `opening_area_mm2(wall: &Wall, openings: &[Opening]) -> f64` | Total opening area on wall (mm²) |
+| `section_net_area(wall: &Wall, side: WallSide, section_index: usize, openings: &[Opening]) -> f64` | Net area for one section |
 | `wall_side_quantity(unit: UnitType, wall: &Wall, side: WallSide, openings: &[Opening]) -> f64` | Quantity for whole wall side |
 | `wall_section_quantity(unit, wall, side, section_index, openings) -> f64` | Quantity for one section of a wall side |
 | `opening_quantity(unit: UnitType, opening: &Opening) -> f64` | Quantity for an opening |
@@ -85,7 +96,7 @@
 
 | Signature | Purpose |
 |-----------|---------|
-| `snap(world_pos: Point2D, grid_step: f64, zoom: f32, walls: &[Wall], shift_held: bool) -> SnapResult` | Compute snapped position. Priority: vertex > wall edge > grid > free |
+| `snap(world_pos: DVec2, grid_step: f64, zoom: f32, walls: &[Wall], shift_held: bool) -> SnapResult` | Compute snapped position. Priority: vertex > wall edge > grid > free |
 
 **Constants:** `VERTEX_SNAP_SCREEN_PX: f64 = 15.0`
 
@@ -94,7 +105,7 @@
 | Signature | Purpose |
 |-----------|---------|
 | `WallTool::reset(&mut self)` | Reset to Idle, clear all state |
-| `WallTool::chain_from(&mut self, point: Point2D)` | Continue chain from endpoint |
+| `WallTool::chain_from(&mut self, point: DVec2)` | Continue chain from endpoint |
 
 ## `src/editor/room_detection.rs` — WallGraph
 
@@ -118,7 +129,7 @@
 
 | Signature | Purpose |
 |-----------|---------|
-| `triangulate(vertices: &[egui::Pos2]) -> Vec<[usize; 3]>` | Ear-clipping triangulation for rendering |
+| `triangulate(vertices: &[egui::Pos2]) -> Vec<[usize; 3]>` | earcutr-based triangulation for rendering |
 
 ## `src/editor/wall_joints.rs` — Wall Joint Rendering
 
@@ -128,42 +139,17 @@
 
 **Constants:** `MERGE_EPS: f64 = 5.0`, `MAX_MITER_RATIO: f32 = 3.0`
 
-## `src/history.rs` — Command System
-
-### Command Trait
-
-| Signature | Purpose |
-|-----------|---------|
-| `Command::execute(&mut self, project: &mut Project)` | Apply the command |
-| `Command::undo(&mut self, project: &mut Project)` | Reverse the command |
-| `Command::description(&self) -> &str` | Russian description string |
-
-### History
+## `src/history.rs` — Snapshot Undo/Redo
 
 | Signature | Purpose |
 |-----------|---------|
 | `History::new() -> Self` | Create empty history |
-| `History::push(&mut self, cmd: Box<dyn Command>, project: &mut Project)` | Execute command, push to undo stack, clear redo |
-| `History::push_already_applied(&mut self, cmd: Box<dyn Command>)` | Push without executing (for DragValue edits) |
-| `History::undo(&mut self, project: &mut Project) -> bool` | Undo last command |
-| `History::redo(&mut self, project: &mut Project) -> bool` | Redo last undone command |
+| `History::snapshot(&mut self, project: &Project, description: &'static str)` | Clone project to undo stack, clear redo stack, increment version |
+| `History::undo(&mut self, project: &mut Project) -> bool` | Swap project with previous state from undo stack |
+| `History::redo(&mut self, project: &mut Project) -> bool` | Swap project with next state from redo stack |
 | `History::can_undo(&self) -> bool` | Check if undo stack is non-empty |
 | `History::can_redo(&self) -> bool` | Check if redo stack is non-empty |
-
-### Command Variants
-
-| Struct | Fields | execute() | undo() |
-|--------|--------|-----------|--------|
-| `AddWallCommand` | `wall: Wall`, `junction_target: Option<(Uuid, WallSide, f64)>`, `start_junction_target: Option<(Uuid, WallSide, f64)>` | Adds junction(s) to target wall side(s), pushes wall to `project.walls` | Removes junctions, removes wall |
-| `RemoveWallCommand` | `wall: Wall`, `openings: Vec<Opening>`, `removed_junctions: Vec<(Uuid, WallSide, f64)>` | Detaches openings (sets fallback_position), removes junctions from other walls, removes wall | Restores wall, re-attaches openings, restores junctions |
-| `ModifyWallCommand` | `wall_id: Uuid`, `old: WallProps`, `new: WallProps` | Sets wall thickness, left_side, right_side to `new` | Sets to `old` |
-| `AddOpeningCommand` | `opening: Opening` | Links opening to wall's `openings` list, adds to `project.openings` | Unlinks from wall, removes from openings |
-| `RemoveOpeningCommand` | `opening: Opening` | Unlinks from wall, removes from project | Restores opening and wall link |
-| `ModifyOpeningCommand` | `opening_id: Uuid`, `old_kind: OpeningKind`, `new_kind: OpeningKind` | Sets opening kind to `new_kind` | Sets to `old_kind` |
-
-**Constructor:** `RemoveWallCommand::new(wall_id, project) -> Option<Self>` — snapshots wall + attached openings + junctions referencing this wall.
-**Constructor:** `RemoveOpeningCommand::new(opening_id, project) -> Option<Self>` — snapshots the opening.
-**Constructor:** `ModifyOpeningCommand::from_values(opening_id, old_kind, new_kind) -> Self`
+| `History::mark_dirty(&mut self)` | Bump version without storing snapshot (for non-undoable changes) |
 
 ## `src/persistence/project_io.rs` — Project I/O
 
@@ -202,20 +188,19 @@
 
 | File | Method | Purpose |
 |------|--------|---------|
+| `mod.rs` | `delete_selected(&mut self)` | Snapshot + remove selected wall/opening/label |
 | `canvas.rs` | `show_canvas(&mut self, ctx)` | Central panel: input handling, tool dispatch, room detection, rendering |
 | `canvas_draw.rs` | `draw_walls(&self, painter, rect)` | Render all walls with joints, sections, labels |
 | `canvas_draw.rs` | `draw_openings(&self, painter, rect)` | Render doors (arc) and windows (parallel lines) |
 | `canvas_draw.rs` | `draw_rooms(&self, painter, rect)` | Render room fills (triangulated) with name/area labels |
 | `canvas_draw.rs` | `draw_wall_preview(&self, painter, rect)` | Preview line for wall being drawn |
 | `canvas_draw.rs` | `draw_opening_preview(&self, painter, rect)` | Preview rectangle for opening placement |
-| `toolbar.rs` | `handle_keyboard_shortcuts(&mut self, ctx)` | Ctrl+Z/Y/S/N/O, V/W/D/O tool hotkeys |
+| `toolbar.rs` | `handle_keyboard_shortcuts(&mut self, ctx)` | Ctrl+Z/Y/S/N/O, V/W/D/O/T tool hotkeys |
 | `toolbar.rs` | `show_toolbar(&mut self, ctx)` | Top panel: tool buttons, undo/redo, save, export, new project dialog |
-| `toolbar.rs` | `show_left_panel(&mut self, ctx)` | Left panel: project structure tree, room list |
+| `toolbar.rs` | `show_left_panel(&mut self, ctx)` | Left panel: project structure tree, room list, label list |
 | `toolbar.rs` | `show_project_settings_window(&mut self, ctx)` | Floating window: edit project defaults (wall/door/window dimensions) |
 | `project_list.rs` | `show_project_list(&mut self, ctx)` | Startup screen: create/open/delete projects |
 | `properties_panel.rs` | `show_right_panel(&mut self, ctx)` | Right panel: property editors, service lists |
-| `property_edits.rs` | `update_edit_snapshots(&mut self)` | Detect selection change, flush if snapshot mismatch |
-| `property_edits.rs` | `flush_property_edits(&mut self)` | Compare current props vs snapshot, push ModifyCommand if changed |
 | `property_edits.rs` | `has_validation_errors(&self) -> bool` | Check for detached or out-of-bounds openings |
 | `property_edits.rs` | `opening_errors(&self, opening) -> Vec<&str>` | List validation errors for an opening |
 | `property_edits.rs` | `selection_target_type(&self) -> Option<TargetObjectType>` | Map current selection to target type |

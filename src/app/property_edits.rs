@@ -1,129 +1,10 @@
 use eframe::egui;
 
 use crate::editor::Selection;
-use crate::history::{LabelProps, ModifyLabelCommand, ModifyOpeningCommand, ModifyWallCommand, RemoveLabelCommand, WallProps};
 use crate::model::{Opening, OpeningKind, SideData, TargetObjectType};
-use super::App;
-
-fn opening_kind_changed(a: &OpeningKind, b: &OpeningKind) -> bool {
-    match (a, b) {
-        (
-            OpeningKind::Door { height: h1, width: w1 },
-            OpeningKind::Door { height: h2, width: w2 },
-        ) => (h1 - h2).abs() > 0.01 || (w1 - w2).abs() > 0.01,
-        (
-            OpeningKind::Window { height: h1, width: w1, sill_height: s1, reveal_width: r1 },
-            OpeningKind::Window { height: h2, width: w2, sill_height: s2, reveal_width: r2 },
-        ) => {
-            (h1 - h2).abs() > 0.01 || (w1 - w2).abs() > 0.01
-                || (s1 - s2).abs() > 0.01 || (r1 - r2).abs() > 0.01
-        }
-        _ => true,
-    }
-}
+use super::{App, SECTION_COLORS};
 
 impl App {
-    pub(super) fn update_edit_snapshots(&mut self) {
-        let wall_snap_matches = match (&self.wall_edit_snapshot, self.editor.selection) {
-            (Some((snap_id, ..)), Selection::Wall(sel_id)) => *snap_id == sel_id,
-            (None, _) => true,
-            _ => false,
-        };
-        if !wall_snap_matches {
-            self.flush_property_edits();
-        }
-
-        let opening_snap_matches = match (&self.opening_edit_snapshot, self.editor.selection) {
-            (Some((snap_id, _)), Selection::Opening(sel_id)) => *snap_id == sel_id,
-            (None, _) => true,
-            _ => false,
-        };
-        if !opening_snap_matches {
-            self.flush_property_edits();
-        }
-
-        let label_snap_matches = match (&self.label_edit_snapshot, self.editor.selection) {
-            (Some((snap_id, _)), Selection::Label(sel_id)) => *snap_id == sel_id,
-            (None, _) => true,
-            _ => false,
-        };
-        if !label_snap_matches {
-            self.flush_property_edits();
-        }
-    }
-
-    pub(super) fn flush_property_edits(&mut self) {
-        if let Some((snap_id, old_props)) = self.wall_edit_snapshot.take() {
-            if let Some(wall) = self.project.walls.iter().find(|w| w.id == snap_id) {
-                let sections_changed = |old: &SideData, new: &SideData| -> bool {
-                    if old.sections.len() != new.sections.len() {
-                        return true;
-                    }
-                    old.sections.iter().zip(new.sections.iter()).any(|(a, b)| {
-                        (a.length - b.length).abs() > 0.01
-                            || (a.height_start - b.height_start).abs() > 0.01
-                            || (a.height_end - b.height_end).abs() > 0.01
-                    })
-                };
-                let changed = (wall.thickness - old_props.thickness).abs() > 0.01
-                    || (wall.left_side.length - old_props.left_side.length).abs() > 0.01
-                    || (wall.left_side.height_start - old_props.left_side.height_start).abs() > 0.01
-                    || (wall.left_side.height_end - old_props.left_side.height_end).abs() > 0.01
-                    || (wall.right_side.length - old_props.right_side.length).abs() > 0.01
-                    || (wall.right_side.height_start - old_props.right_side.height_start).abs() > 0.01
-                    || (wall.right_side.height_end - old_props.right_side.height_end).abs() > 0.01
-                    || sections_changed(&old_props.left_side, &wall.left_side)
-                    || sections_changed(&old_props.right_side, &wall.right_side);
-                if changed {
-                    let new_props = WallProps {
-                        thickness: wall.thickness,
-                        left_side: wall.left_side.clone(),
-                        right_side: wall.right_side.clone(),
-                    };
-                    self.history.push_already_applied(Box::new(
-                        ModifyWallCommand::new(snap_id, old_props, new_props),
-                    ));
-                }
-            }
-        }
-        if let Some((snap_id, old_kind)) = self.opening_edit_snapshot.take() {
-            if let Some(opening) = self.project.openings.iter().find(|o| o.id == snap_id) {
-                if opening_kind_changed(&old_kind, &opening.kind) {
-                    self.history.push_already_applied(Box::new(
-                        ModifyOpeningCommand::from_values(snap_id, old_kind, opening.kind.clone()),
-                    ));
-                }
-            }
-        }
-        if let Some((snap_id, old_props)) = self.label_edit_snapshot.take() {
-            if let Some(label) = self.project.labels.iter().find(|l| l.id == snap_id) {
-                // Auto-delete if text is empty
-                if label.text.trim().is_empty() {
-                    if let Some(cmd) = RemoveLabelCommand::new(snap_id, &self.project) {
-                        self.history.push(Box::new(cmd), &mut self.project);
-                    }
-                    if matches!(self.editor.selection, Selection::Label(id) if id == snap_id) {
-                        self.editor.selection = Selection::None;
-                    }
-                } else {
-                    let changed = old_props.text != label.text
-                        || (old_props.font_size - label.font_size).abs() > 0.01
-                        || (old_props.rotation - label.rotation).abs() > 0.001;
-                    if changed {
-                        let new_props = LabelProps {
-                            text: label.text.clone(),
-                            font_size: label.font_size,
-                            rotation: label.rotation,
-                        };
-                        self.history.push_already_applied(Box::new(
-                            ModifyLabelCommand::new(snap_id, old_props, new_props),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
     pub(super) fn has_validation_errors(&self) -> bool {
         for opening in &self.project.openings {
             if opening.wall_id.is_none() {
@@ -187,15 +68,6 @@ impl App {
     }
 
     pub(super) fn show_side_sections(ui: &mut egui::Ui, side_data: &mut SideData, side_id: &str, section_net_areas: &[f64], color_offset: usize) {
-        const SECTION_COLORS: &[(u8, u8, u8)] = &[
-            (100, 180, 240),
-            (240, 160, 100),
-            (100, 220, 140),
-            (220, 120, 220),
-            (240, 220, 100),
-            (120, 220, 220),
-        ];
-
         ui.add_space(4.0);
         let mut changed = false;
         for i in 0..side_data.sections.len() {
