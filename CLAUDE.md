@@ -35,7 +35,7 @@ src/
 ├── app/                     # UI rendering and input handling
 │   ├── mod.rs               # App struct, AppScreen enum, eframe::App impl, project management
 │   ├── canvas.rs            # Central panel: pan/zoom input, tool dispatch, room detection trigger
-│   ├── canvas_draw.rs       # Wall/opening/room/preview rendering (labels rotated along walls)
+│   ├── canvas_draw.rs       # Wall/opening/room/preview rendering (two-pass: geometry then overlays)
 │   ├── toolbar.rs           # Top toolbar, left panel, keyboard shortcuts
 │   ├── project_list.rs      # ProjectList startup screen
 │   ├── properties_panel.rs  # Right panel: wall/opening/room property editors
@@ -82,6 +82,7 @@ src/
 - **Deferred property edits**: DragValue mutations go directly to project fields. On selection change or before next command, `flush_property_edits()` compares against a snapshot and pushes a `ModifyWallCommand`/`ModifyOpeningCommand` if changed.
 - **Services assigned per-object**: `Project.wall_services` is `HashMap<Uuid, WallSideServices>` (per-side, per-section). `opening_services` and `room_services` are `HashMap<Uuid, Vec<AssignedService>>`.
 - **Canvas label scaling**: All canvas label font sizes are multiplied by `App.label_scale` (default 1.0, range 0.5–3.0). Controlled via a slider in the left panel. Affects wall thickness/section labels, room name/area labels, opening previews, and wall preview lengths.
+- **Wall rendering two-pass**: `draw_walls()` uses a two-pass approach. Pass 1 draws geometry (opaque section quads per side, junction ticks, wall outline, hub polygons). Pass 2 draws overlays on top (selection highlights, endpoint circles, text labels). This ensures indicators and labels are never hidden by joint fills. Each wall section is an opaque half-width polygon (centerline→edge) — no transparent overlays. Single-section sides use neutral gray; multi-section sides use the shared `SECTION_COLORS` palette blended with gray.
 
 ### App Screens
 

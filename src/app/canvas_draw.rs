@@ -60,24 +60,49 @@ impl App {
 
         let (joint_map, hub_polygons) = compute_joints(&self.project.walls, &self.editor.canvas, center);
 
-        // Distinct section color palettes per side
-        const LEFT_SECTION_COLORS: &[(u8, u8, u8)] = &[
-            (80, 140, 210),
-            (100, 170, 230),
-            (60, 120, 190),
-            (90, 155, 220),
-            (70, 130, 200),
-            (110, 180, 240),
-        ];
-        const RIGHT_SECTION_COLORS: &[(u8, u8, u8)] = &[
-            (210, 140, 80),
-            (230, 160, 100),
-            (190, 120, 60),
-            (220, 150, 90),
-            (200, 130, 70),
-            (240, 170, 110),
+        // Shared section color palette (matches property_edits.rs and services_panel.rs)
+        const SECTION_COLORS: &[(u8, u8, u8)] = &[
+            (100, 180, 240),
+            (240, 160, 100),
+            (100, 220, 140),
+            (220, 120, 220),
+            (240, 220, 100),
+            (120, 220, 220),
         ];
 
+        // Blend a palette color with the wall gray base to produce a muted opaque fill
+        let blend_color = |palette: (u8, u8, u8), factor: f32| -> egui::Color32 {
+            let base = (140.0_f32, 140.0, 145.0);
+            egui::Color32::from_rgb(
+                (base.0 * (1.0 - factor) + palette.0 as f32 * factor) as u8,
+                (base.1 * (1.0 - factor) + palette.1 as f32 * factor) as u8,
+                (base.2 * (1.0 - factor) + palette.2 as f32 * factor) as u8,
+            )
+        };
+
+        // Collect overlay elements to draw on top of hub polygons
+        struct WallOverlay {
+            is_selected: bool,
+            corners: [egui::Pos2; 4],
+            start_screen: egui::Pos2,
+            end_screen: egui::Pos2,
+            wall_angle: f32,
+            len: f32,
+            thickness_mm: f64,
+        }
+
+        let mut overlays: Vec<WallOverlay> = Vec::new();
+
+        // Collect section label data for deferred drawing
+        struct SectionLabel {
+            pos: egui::Pos2,
+            text: String,
+            color: egui::Color32,
+            wall_angle: f32,
+        }
+        let mut section_labels: Vec<SectionLabel> = Vec::new();
+
+        // --- Pass 1: wall geometry (bodies, section fills, junction ticks) ---
         for wall in &self.project.walls {
             let is_selected = selected_id == Some(wall.id);
 
@@ -117,17 +142,10 @@ impl App {
 
             let corners = [start_left, end_left, end_right, start_right];
 
-            // All walls use the same neutral fill
-            painter.add(egui::Shape::convex_polygon(
-                corners.to_vec(),
-                wall_fill,
-                egui::Stroke::new(1.0, wall_outline),
-            ));
-
-            // Section fill strips (always visible)
-            for (side_data, sign, palette) in [
-                (&wall.left_side, 1.0_f32, LEFT_SECTION_COLORS),
-                (&wall.right_side, -1.0_f32, RIGHT_SECTION_COLORS),
+            // Section fill quads — each section is an opaque half-width polygon
+            for (side_data, sign) in [
+                (&wall.left_side, 1.0_f32),
+                (&wall.right_side, -1.0_f32),
             ] {
                 let mut boundaries = vec![0.0_f32];
                 for j in &side_data.junctions {
@@ -135,14 +153,27 @@ impl App {
                 }
                 boundaries.push(1.0);
 
+                let has_multiple = boundaries.len() > 2;
+
+                // Mitered outer corners for this side
+                let (side_start, side_end) = if sign > 0.0 {
+                    (start_left, end_left)
+                } else {
+                    (start_right, end_right)
+                };
+
                 for i in 0..boundaries.len() - 1 {
                     let t0 = boundaries[i];
                     let t1 = boundaries[i + 1];
-                    let color_idx = i % palette.len();
-                    let (cr, cg, cb) = palette[color_idx];
-                    let section_color = egui::Color32::from_rgba_premultiplied(cr, cg, cb, 50);
 
-                    // Quad from centerline to side edge
+                    let section_color = if has_multiple {
+                        let color_idx = i % SECTION_COLORS.len();
+                        blend_color(SECTION_COLORS[color_idx], 0.35)
+                    } else {
+                        wall_fill
+                    };
+
+                    // Centerline points
                     let p0_center = egui::pos2(
                         start_screen.x + dx * t0,
                         start_screen.y + dy * t0,
@@ -151,14 +182,18 @@ impl App {
                         start_screen.x + dx * t1,
                         start_screen.y + dy * t1,
                     );
-                    let p0_edge = egui::pos2(
-                        p0_center.x + nx * sign,
-                        p0_center.y + ny * sign,
-                    );
-                    let p1_edge = egui::pos2(
-                        p1_center.x + nx * sign,
-                        p1_center.y + ny * sign,
-                    );
+
+                    // Outer edge: use mitered corners at wall endpoints, straight normal elsewhere
+                    let p0_edge = if t0 == 0.0 {
+                        side_start
+                    } else {
+                        egui::pos2(p0_center.x + nx * sign, p0_center.y + ny * sign)
+                    };
+                    let p1_edge = if t1 == 1.0 {
+                        side_end
+                    } else {
+                        egui::pos2(p1_center.x + nx * sign, p1_center.y + ny * sign)
+                    };
 
                     painter.add(egui::Shape::convex_polygon(
                         vec![p0_center, p1_center, p1_edge, p0_edge],
@@ -181,43 +216,30 @@ impl App {
                 }
             }
 
-            // Selection highlight: thicker bright outline on top
-            if is_selected {
-                let sel_outline = egui::Color32::from_rgb(60, 160, 255);
-                painter.add(egui::Shape::closed_line(
-                    corners.to_vec(),
-                    egui::Stroke::new(2.5, sel_outline),
-                ));
-                painter.circle_filled(start_screen, 4.0, start_color);
-                painter.circle_filled(end_screen, 4.0, end_color);
-            }
+            // Wall outline (mitered perimeter) on top of section fills
+            painter.add(egui::Shape::closed_line(
+                corners.to_vec(),
+                egui::Stroke::new(1.0, wall_outline),
+            ));
 
-            // Wall direction angle for rotated labels
             let wall_angle = dy.atan2(dx);
 
-            // Wall thickness label at center
-            let thickness_mm = wall.thickness;
-            if len > 20.0 {
-                let mid = egui::pos2(
-                    (start_screen.x + end_screen.x) / 2.0,
-                    (start_screen.y + end_screen.y) / 2.0,
-                );
-                let label = format!("{:.0}", thickness_mm);
-                paint_rotated_text(
-                    painter,
-                    mid,
-                    label,
-                    egui::FontId::proportional(10.0 * self.label_scale),
-                    egui::Color32::BLACK,
-                    wall_angle,
-                );
-            }
+            // Collect overlay data for this wall
+            overlays.push(WallOverlay {
+                is_selected,
+                corners,
+                start_screen,
+                end_screen,
+                wall_angle,
+                len,
+                thickness_mm: wall.thickness,
+            });
 
-            // Per-section dimension labels on each side
+            // Collect section labels
             let left_label_color = egui::Color32::from_rgb(100, 160, 220);
             let right_label_color = egui::Color32::from_rgb(170, 100, 200);
 
-            for (side_data, sign, label_color) in [
+            for (side_data, sign, side_label_color) in [
                 (&wall.left_side, 1.0_f32, left_label_color),
                 (&wall.right_side, -1.0_f32, right_label_color),
             ] {
@@ -226,6 +248,8 @@ impl App {
                     boundaries.push(j.t as f32);
                 }
                 boundaries.push(1.0);
+
+                let has_multiple = boundaries.len() > 2;
 
                 for (i, section) in side_data.sections.iter().enumerate() {
                     if i >= boundaries.len() - 1 {
@@ -238,21 +262,27 @@ impl App {
                     let mid_x = start_screen.x + dx * t_mid + nx * sign * 1.6;
                     let mid_y = start_screen.y + dy * t_mid + ny * sign * 1.6;
 
+                    let label_color = if has_multiple {
+                        let color_idx = i % SECTION_COLORS.len();
+                        let (cr, cg, cb) = SECTION_COLORS[color_idx];
+                        egui::Color32::from_rgb(cr, cg, cb)
+                    } else {
+                        side_label_color
+                    };
+
                     let length_mm = section.length;
                     let area_m2 = section.gross_area() / 1_000_000.0;
-                    let label = format!("{:.0} - {:.2} м²", length_mm, area_m2);
-                    paint_rotated_text(
-                        painter,
-                        egui::pos2(mid_x, mid_y),
-                        label,
-                        egui::FontId::proportional(9.0 * self.label_scale),
-                        label_color,
+                    section_labels.push(SectionLabel {
+                        pos: egui::pos2(mid_x, mid_y),
+                        text: format!("{:.0} мм - {:.2} м²", length_mm, area_m2),
+                        color: label_color,
                         wall_angle,
-                    );
+                    });
                 }
             }
         }
 
+        // --- Draw hub polygons (joint fills) ---
         for hub in &hub_polygons {
             if hub.vertices.len() >= 3 {
                 painter.add(egui::Shape::convex_polygon(
@@ -261,6 +291,48 @@ impl App {
                     egui::Stroke::new(1.0, wall_outline),
                 ));
             }
+        }
+
+        // --- Pass 2: overlays on top (selection outlines, endpoint circles, text labels) ---
+        for ov in &overlays {
+            if ov.is_selected {
+                let sel_outline = egui::Color32::from_rgb(60, 160, 255);
+                painter.add(egui::Shape::closed_line(
+                    ov.corners.to_vec(),
+                    egui::Stroke::new(2.5, sel_outline),
+                ));
+                painter.circle_filled(ov.start_screen, 4.0, start_color);
+                painter.circle_filled(ov.end_screen, 4.0, end_color);
+            }
+
+            // Wall thickness label at center
+            if ov.len > 20.0 {
+                let mid = egui::pos2(
+                    (ov.start_screen.x + ov.end_screen.x) / 2.0,
+                    (ov.start_screen.y + ov.end_screen.y) / 2.0,
+                );
+                let label = format!("{:.0}", ov.thickness_mm);
+                paint_rotated_text(
+                    painter,
+                    mid,
+                    label,
+                    egui::FontId::proportional(10.0 * self.label_scale),
+                    egui::Color32::BLACK,
+                    ov.wall_angle,
+                );
+            }
+        }
+
+        // Section dimension labels
+        for sl in &section_labels {
+            paint_rotated_text(
+                painter,
+                sl.pos,
+                sl.text.clone(),
+                egui::FontId::proportional(9.0 * self.label_scale),
+                sl.color,
+                sl.wall_angle,
+            );
         }
     }
 

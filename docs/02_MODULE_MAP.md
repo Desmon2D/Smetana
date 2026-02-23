@@ -39,7 +39,7 @@
 |------|------:|---------|----------------|
 | `mod.rs` | 217 | `App` struct, `AppScreen` enum, `eframe::App` impl, project management methods | `App` |
 | `canvas.rs` | 478 | `show_canvas()` — central panel: pan/zoom input, tool dispatch (wall/select/opening), room detection trigger | — (pub(super)) |
-| `canvas_draw.rs` | 685 | `draw_walls()`, `draw_openings()`, `draw_rooms()`, `draw_wall_preview()`, `draw_opening_preview()`, plus `paint_rotated_text()` helper for wall-aligned label rendering | — (pub(super)) |
+| `canvas_draw.rs` | 757 | `draw_walls()` (two-pass: opaque section quads + overlays), `draw_openings()`, `draw_rooms()`, `draw_wall_preview()`, `draw_opening_preview()`, plus `paint_rotated_text()` helper for wall-aligned label rendering | — (pub(super)) |
 | `toolbar.rs` | 210 | `show_toolbar()`, `show_left_panel()`, `handle_keyboard_shortcuts()` — top bar, left tree, hotkeys | — (pub(super)) |
 | `project_list.rs` | 180 | `show_project_list()` — startup screen with project CRUD | — (pub(super)) |
 | `properties_panel.rs` | 392 | `show_right_panel()` — property editors for selected wall/opening/room + service lists | — (pub(super)) |

@@ -15,7 +15,7 @@
 │  mod.rs ─── App struct, eframe::App impl, screen dispatch       │
 │  ├── toolbar.rs ──────── top toolbar: tools, undo/redo, save    │
 │  ├── canvas.rs ──────── central panel: input → tool dispatch    │
-│  ├── canvas_draw.rs ──── wall/opening/room/preview rendering    │
+│  ├── canvas_draw.rs ──── two-pass wall/opening/room rendering   │
 │  ├── project_list.rs ─── ProjectList screen (startup)           │
 │  ├── properties_panel.rs  right panel: wall/opening/room props  │
 │  ├── property_edits.rs ── flush edits → history commands        │
@@ -95,7 +95,7 @@ show_canvas():
   5. Room detection: WallGraph::build() (incl. T-junction vertex merge) → detect_rooms() → merge_rooms()
   6. Drawing:
      ├── draw_rooms()          ← triangulated fill + name/area labels
-     ├── draw_walls()          ← joint computation, quad rendering, section fills
+     ├── draw_walls()          ← pass 1: opaque section quads, joints, outline; pass 2: overlays
      ├── draw_openings()       ← gap cut + door arc / window parallel lines
      ├── draw_wall_preview()   ← preview line + snap indicator
      └── draw_opening_preview()← translucent placement preview
