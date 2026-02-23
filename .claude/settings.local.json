@@ -16,7 +16,15 @@
       "Bash(find:*)",
       "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo check 2>&1)",
       "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo clippy 2>&1)",
-      "Bash(tail:*)"
+      "Bash(tail:*)",
+      "Bash(cd \"C:\\\\Users\\\\Desmon2d\\\\source\\\\repos\\\\Smetana\" && cargo build 2>&1)",
+      "Bash(cd C:\\\\Users\\\\Desmon2d\\\\source\\\\repos\\\\Smetana:*)",
+      "Bash(grep:*)",
+      "WebSearch",
+      "WebFetch(domain:docs.rs)",
+      "Bash(wc:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(git:*)"
     ]
   },
   "prefersReducedMotion": false
