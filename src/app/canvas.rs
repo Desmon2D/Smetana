@@ -70,6 +70,8 @@ impl App {
                                 self.editor.wall_tool.chain_start = Some(snapped);
                                 self.editor.wall_tool.start_snap =
                                     self.editor.wall_tool.last_snap.clone();
+                                self.editor.wall_tool.chain_start_snap =
+                                    self.editor.wall_tool.last_snap.clone();
                                 self.editor.wall_tool.state =
                                     WallToolState::Drawing { start: snapped };
                             }
@@ -98,18 +100,56 @@ impl App {
                                 if closing {
                                     let chain_start =
                                         self.editor.wall_tool.chain_start.unwrap();
+                                    // The closing wall ends at chain_start which may
+                                    // have been a T-junction (wall edge snap).
+                                    let end_junction = match &self.editor.wall_tool.chain_start_snap {
+                                        Some(snap_res) => match &snap_res.snap_type {
+                                            SnapType::WallEdge { wall_id, side, t } => {
+                                                Some((*wall_id, *side, *t))
+                                            }
+                                            _ => None,
+                                        },
+                                        None => None,
+                                    };
                                     let wall = Wall::new(start, chain_start);
                                     self.flush_property_edits();
                                     self.history.push(
-                                        Box::new(AddWallCommand { wall, junction_target: None }),
+                                        Box::new(AddWallCommand {
+                                            wall,
+                                            junction_target: end_junction,
+                                            start_junction_target: None,
+                                        }),
                                         &mut self.project,
                                     );
                                     self.editor.wall_tool.reset();
                                 } else if start.distance_to(snapped) > 1.0 {
+                                    // Start-point junction: only for the first wall
+                                    // of the chain (start == chain_start). Subsequent
+                                    // chained walls inherit the previous wall's end
+                                    // junction, so no double-registration.
+                                    let is_first_in_chain = self.editor.wall_tool.chain_start
+                                        .map_or(false, |cs| cs.distance_to(start) < 1.0);
+                                    let start_junction = if is_first_in_chain {
+                                        match &self.editor.wall_tool.start_snap {
+                                            Some(snap_res) => match &snap_res.snap_type {
+                                                SnapType::WallEdge { wall_id, side, t } => {
+                                                    Some((*wall_id, *side, *t))
+                                                }
+                                                _ => None,
+                                            },
+                                            None => None,
+                                        }
+                                    } else {
+                                        None
+                                    };
                                     let wall = Wall::new(start, snapped);
                                     self.flush_property_edits();
                                     self.history.push(
-                                        Box::new(AddWallCommand { wall, junction_target }),
+                                        Box::new(AddWallCommand {
+                                            wall,
+                                            junction_target,
+                                            start_junction_target: start_junction,
+                                        }),
                                         &mut self.project,
                                     );
                                     // Save current snap as the start_snap for the next

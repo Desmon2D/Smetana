@@ -108,7 +108,12 @@ impl SideData {
     }
 
     /// Insert a junction and recompute sections.
+    /// If a junction already exists at the same `t` position (within 0.001),
+    /// the insertion is skipped to avoid duplicate zero-length sections.
     pub fn add_junction(&mut self, wall_id: Uuid, t: f64) {
+        if self.junctions.iter().any(|j| (j.t - t).abs() < 0.001) {
+            return;
+        }
         // Insert sorted by t
         let pos = self.junctions.iter().position(|j| j.t > t).unwrap_or(self.junctions.len());
         self.junctions.insert(pos, SideJunction { wall_id, t });

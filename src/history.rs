@@ -10,15 +10,28 @@ pub trait Command {
 
 pub struct AddWallCommand {
     pub wall: Wall,
-    /// Junction created on another wall's side (if T-junction attachment).
+    /// Junction created on another wall's side at the wall's END point.
     /// (target_wall_id, side, t)
     pub junction_target: Option<(uuid::Uuid, WallSide, f64)>,
+    /// Junction created on another wall's side at the wall's START point.
+    /// (target_wall_id, side, t)
+    pub start_junction_target: Option<(uuid::Uuid, WallSide, f64)>,
 }
 
 impl Command for AddWallCommand {
     fn execute(&mut self, project: &mut Project) {
-        // Add junction to target wall if T-junction
+        // Add end-point junction to target wall
         if let Some((target_id, side, t)) = self.junction_target {
+            if let Some(target) = project.walls.iter_mut().find(|w| w.id == target_id) {
+                let side_data = match side {
+                    WallSide::Left => &mut target.left_side,
+                    WallSide::Right => &mut target.right_side,
+                };
+                side_data.add_junction(self.wall.id, t);
+            }
+        }
+        // Add start-point junction to target wall
+        if let Some((target_id, side, t)) = self.start_junction_target {
             if let Some(target) = project.walls.iter_mut().find(|w| w.id == target_id) {
                 let side_data = match side {
                     WallSide::Left => &mut target.left_side,
@@ -31,8 +44,18 @@ impl Command for AddWallCommand {
     }
 
     fn undo(&mut self, project: &mut Project) {
-        // Remove junction from target wall
+        // Remove end-point junction from target wall
         if let Some((target_id, side, _)) = self.junction_target {
+            if let Some(target) = project.walls.iter_mut().find(|w| w.id == target_id) {
+                let side_data = match side {
+                    WallSide::Left => &mut target.left_side,
+                    WallSide::Right => &mut target.right_side,
+                };
+                side_data.remove_junction(self.wall.id);
+            }
+        }
+        // Remove start-point junction from target wall
+        if let Some((target_id, side, _)) = self.start_junction_target {
             if let Some(target) = project.walls.iter_mut().find(|w| w.id == target_id) {
                 let side_data = match side {
                     WallSide::Left => &mut target.left_side,

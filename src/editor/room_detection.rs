@@ -76,6 +76,65 @@ impl WallGraph {
             wall_vertices.push((wall.id, verts));
         }
 
+        // Step 2b: Merge T-junction vertices.
+        // Wall endpoints at T-junctions are on the host wall's EDGE (offset by
+        // half-thickness), while junction split vertices are on the CENTERLINE.
+        // These positions differ by ~half-thickness (e.g. 100mm for a 200mm wall)
+        // which exceeds MERGE_EPSILON. Force-merge them so the graph is connected.
+        for host_wall in walls {
+            for junction in host_wall
+                .left_side
+                .junctions
+                .iter()
+                .chain(host_wall.right_side.junctions.iter())
+            {
+                // Junction vertex on the host wall's centerline
+                let junc_pt = Point2D::new(
+                    host_wall.start.x
+                        + (host_wall.end.x - host_wall.start.x) * junction.t,
+                    host_wall.start.y
+                        + (host_wall.end.y - host_wall.start.y) * junction.t,
+                );
+                let junc_idx =
+                    match positions.iter().position(|p| p.distance_to(junc_pt) < MERGE_EPSILON) {
+                        Some(idx) => idx,
+                        None => continue,
+                    };
+
+                // Find the connecting wall's endpoint closest to the junction
+                let conn_wall = match walls.iter().find(|w| w.id == junction.wall_id) {
+                    Some(w) => w,
+                    None => continue,
+                };
+                let start_dist = conn_wall.start.distance_to(junc_pt);
+                let end_dist = conn_wall.end.distance_to(junc_pt);
+                let conn_endpoint = if start_dist < end_dist {
+                    conn_wall.start
+                } else {
+                    conn_wall.end
+                };
+                let conn_idx =
+                    match positions.iter().position(|p| p.distance_to(conn_endpoint) < MERGE_EPSILON)
+                    {
+                        Some(idx) => idx,
+                        None => continue,
+                    };
+
+                if conn_idx == junc_idx {
+                    continue;
+                }
+
+                // Redirect all references from conn_idx to junc_idx
+                for (_, verts) in &mut wall_vertices {
+                    for v in verts.iter_mut() {
+                        if *v == conn_idx {
+                            *v = junc_idx;
+                        }
+                    }
+                }
+            }
+        }
+
         // Step 3: Build adjacency lists — each wall segment becomes edges
         let mut adjacency: Vec<Vec<(usize, Uuid, f64)>> = vec![Vec::new(); positions.len()];
 

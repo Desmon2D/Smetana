@@ -22,6 +22,9 @@ pub struct WallTool {
     /// Snap result from the first click (start point). Stored separately so that
     /// only the second click's snap produces a junction_target.
     pub start_snap: Option<SnapResult>,
+    /// Snap result from the very first click of the chain (preserved across chain
+    /// continuations so the closing wall can register a T-junction at chain_start).
+    pub chain_start_snap: Option<SnapResult>,
 }
 
 impl Default for WallTool {
@@ -32,6 +35,7 @@ impl Default for WallTool {
             chain_start: None,
             last_snap: None,
             start_snap: None,
+            chain_start_snap: None,
         }
     }
 }
@@ -44,6 +48,7 @@ impl WallTool {
         self.chain_start = None;
         self.last_snap = None;
         self.start_snap = None;
+        self.chain_start_snap = None;
     }
 
     /// Continue chaining from the given endpoint.
