@@ -43,6 +43,20 @@ pub(super) struct WallAtJunction {
     pub(super) dir: egui::Vec2,
 }
 
+impl WallAtJunction {
+    /// Edge facing the CW direction on screen (increasing atan2 angle, Y-down).
+    /// - is_end=false: left (wall left normal is 90° CW from outgoing on screen)
+    /// - is_end=true: right (wall right normal is 90° CW from outgoing on screen)
+    pub(super) fn cw_edge(&self) -> egui::Pos2 {
+        if self.is_end { self.right } else { self.left }
+    }
+
+    /// Edge facing the CCW direction on screen.
+    pub(super) fn ccw_edge(&self) -> egui::Pos2 {
+        if self.is_end { self.left } else { self.right }
+    }
+}
+
 /// Compute adjusted joint vertices for all wall endpoints and hub polygons.
 pub fn compute_joints(
     walls: &[Wall],

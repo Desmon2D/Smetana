@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::editor::Selection;
-use crate::history::{ModifyOpeningCommand, ModifyWallCommand, WallProps};
+use crate::history::{LabelProps, ModifyLabelCommand, ModifyOpeningCommand, ModifyWallCommand, RemoveLabelCommand, WallProps};
 use crate::model::{Opening, OpeningKind, SideData, TargetObjectType};
 use super::App;
 
@@ -39,6 +39,15 @@ impl App {
             _ => false,
         };
         if !opening_snap_matches {
+            self.flush_property_edits();
+        }
+
+        let label_snap_matches = match (&self.label_edit_snapshot, self.editor.selection) {
+            (Some((snap_id, _)), Selection::Label(sel_id)) => *snap_id == sel_id,
+            (None, _) => true,
+            _ => false,
+        };
+        if !label_snap_matches {
             self.flush_property_edits();
         }
     }
@@ -83,6 +92,33 @@ impl App {
                     self.history.push_already_applied(Box::new(
                         ModifyOpeningCommand::from_values(snap_id, old_kind, opening.kind.clone()),
                     ));
+                }
+            }
+        }
+        if let Some((snap_id, old_props)) = self.label_edit_snapshot.take() {
+            if let Some(label) = self.project.labels.iter().find(|l| l.id == snap_id) {
+                // Auto-delete if text is empty
+                if label.text.trim().is_empty() {
+                    if let Some(cmd) = RemoveLabelCommand::new(snap_id, &self.project) {
+                        self.history.push(Box::new(cmd), &mut self.project);
+                    }
+                    if matches!(self.editor.selection, Selection::Label(id) if id == snap_id) {
+                        self.editor.selection = Selection::None;
+                    }
+                } else {
+                    let changed = old_props.text != label.text
+                        || (old_props.font_size - label.font_size).abs() > 0.01
+                        || (old_props.rotation - label.rotation).abs() > 0.001;
+                    if changed {
+                        let new_props = LabelProps {
+                            text: label.text.clone(),
+                            font_size: label.font_size,
+                            rotation: label.rotation,
+                        };
+                        self.history.push_already_applied(Box::new(
+                            ModifyLabelCommand::new(snap_id, old_props, new_props),
+                        ));
+                    }
                 }
             }
         }
@@ -145,6 +181,7 @@ impl App {
                 })
             }
             Selection::Room(_) => Some(TargetObjectType::Room),
+            Selection::Label(_) => None,
             Selection::None => None,
         }
     }

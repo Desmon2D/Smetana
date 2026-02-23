@@ -1,4 +1,4 @@
-use crate::model::{Opening, OpeningKind, Point2D, Project, SideData, Wall, WallSide};
+use crate::model::{Label, Opening, OpeningKind, Point2D, Project, SideData, Wall, WallSide};
 
 pub trait Command {
     fn execute(&mut self, project: &mut Project);
@@ -302,6 +302,92 @@ impl Command for ModifyOpeningCommand {
 
     fn description(&self) -> &str {
         "Изменить проём"
+    }
+}
+
+// --- Label commands ---
+
+pub struct AddLabelCommand {
+    pub label: Label,
+}
+
+impl Command for AddLabelCommand {
+    fn execute(&mut self, project: &mut Project) {
+        project.labels.push(self.label.clone());
+    }
+
+    fn undo(&mut self, project: &mut Project) {
+        project.labels.retain(|l| l.id != self.label.id);
+    }
+
+    fn description(&self) -> &str {
+        "Добавить подпись"
+    }
+}
+
+pub struct RemoveLabelCommand {
+    label: Label,
+}
+
+impl RemoveLabelCommand {
+    pub fn new(label_id: uuid::Uuid, project: &Project) -> Option<Self> {
+        let label = project.labels.iter().find(|l| l.id == label_id)?.clone();
+        Some(Self { label })
+    }
+}
+
+impl Command for RemoveLabelCommand {
+    fn execute(&mut self, project: &mut Project) {
+        project.labels.retain(|l| l.id != self.label.id);
+    }
+
+    fn undo(&mut self, project: &mut Project) {
+        project.labels.push(self.label.clone());
+    }
+
+    fn description(&self) -> &str {
+        "Удалить подпись"
+    }
+}
+
+#[derive(Clone)]
+pub struct LabelProps {
+    pub text: String,
+    pub font_size: f64,
+    pub rotation: f64,
+}
+
+pub struct ModifyLabelCommand {
+    label_id: uuid::Uuid,
+    old: LabelProps,
+    new: LabelProps,
+}
+
+impl ModifyLabelCommand {
+    pub fn new(label_id: uuid::Uuid, old: LabelProps, new: LabelProps) -> Self {
+        Self { label_id, old, new }
+    }
+
+    fn apply(props: &LabelProps, label_id: uuid::Uuid, project: &mut Project) {
+        if let Some(label) = project.labels.iter_mut().find(|l| l.id == label_id) {
+            label.text = props.text.clone();
+            label.font_size = props.font_size;
+            label.rotation = props.rotation;
+        }
+    }
+}
+
+impl Command for ModifyLabelCommand {
+    fn execute(&mut self, project: &mut Project) {
+        Self::apply(&self.new, self.label_id, project);
+    }
+
+    fn undo(&mut self, project: &mut Project) {
+        Self::apply(&self.old, self.label_id, project);
+    }
+
+    fn description(&self) -> &str {
+        "Изменить подпись"
     }
 }
 

@@ -1,7 +1,9 @@
 use eframe::egui;
 
+use crate::model::ProjectDefaults;
 use crate::persistence::delete_project;
 use super::App;
+use super::toolbar::show_defaults_form;
 
 enum ProjectListAction {
     Open(usize),
@@ -70,11 +72,19 @@ impl App {
                     .clicked()
                 {
                     let name = self.new_project_name.trim().to_string();
+                    let defaults = self.new_project_defaults.clone();
                     self.new_project_name.clear();
-                    self.create_new_project(name);
+                    self.new_project_defaults = ProjectDefaults::default();
+                    self.create_new_project(name, defaults);
                     return;
                 }
             });
+
+            egui::CollapsingHeader::new("Размеры по умолчанию")
+                .default_open(false)
+                .show(ui, |ui| {
+                    show_defaults_form(ui, &mut self.new_project_defaults);
+                });
 
             ui.add_space(12.0);
             ui.separator();

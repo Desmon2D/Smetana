@@ -2,8 +2,8 @@ use eframe::egui;
 
 use crate::editor::{EditorTool, Selection, SnapType, WallToolState, snap};
 use crate::editor::room_detection::WallGraph;
-use crate::history::{AddOpeningCommand, AddWallCommand, RemoveOpeningCommand, RemoveWallCommand};
-use crate::model::{Opening, OpeningKind, Point2D, Wall};
+use crate::history::{AddLabelCommand, AddOpeningCommand, AddWallCommand, RemoveLabelCommand, RemoveOpeningCommand, RemoveWallCommand};
+use crate::model::{Label, Opening, OpeningKind, Point2D, Wall};
 use super::App;
 
 impl App {
@@ -111,7 +111,7 @@ impl App {
                                         },
                                         None => None,
                                     };
-                                    let wall = Wall::new(start, chain_start);
+                                    let wall = Wall::new(start, chain_start, self.project.defaults.wall_thickness, self.project.defaults.wall_height);
                                     self.flush_property_edits();
                                     self.history.push(
                                         Box::new(AddWallCommand {
@@ -142,7 +142,7 @@ impl App {
                                     } else {
                                         None
                                     };
-                                    let wall = Wall::new(start, snapped);
+                                    let wall = Wall::new(start, snapped, self.project.defaults.wall_thickness, self.project.defaults.wall_height);
                                     self.flush_property_edits();
                                     self.history.push(
                                         Box::new(AddWallCommand {
@@ -175,6 +175,21 @@ impl App {
                         let click_pt = Point2D::new(world.x as f64, world.y as f64);
                         let hit_tolerance = 10.0_f64 / self.editor.canvas.zoom as f64;
 
+                        // Check labels first (small click targets)
+                        let label_hit_tolerance = 20.0_f64 / self.editor.canvas.zoom as f64;
+                        let mut best_label: Option<(uuid::Uuid, f64)> = None;
+                        for label in &self.project.labels {
+                            let dist = click_pt.distance_to(label.position);
+                            if dist < label_hit_tolerance {
+                                if best_label.is_none() || dist < best_label.unwrap().1 {
+                                    best_label = Some((label.id, dist));
+                                }
+                            }
+                        }
+
+                        if let Some((id, _)) = best_label {
+                            self.editor.selection = Selection::Label(id);
+                        } else {
                         let mut best_opening: Option<(uuid::Uuid, f64)> = None;
                         for opening in &self.project.openings {
                             if let Some(wid) = opening.wall_id {
@@ -237,11 +252,27 @@ impl App {
                                 None => Selection::None,
                             };
                         }
+                        } // else (label not hit)
                     }
                 }
 
                 if response.dragged_by(egui::PointerButton::Primary) && !space_held {
-                    if let Selection::Opening(oid) = self.editor.selection {
+                    if let Selection::Label(lid) = self.editor.selection {
+                        if let Some(hover) = response.hover_pos() {
+                            let world =
+                                self.editor.canvas.screen_to_world(hover, rect.center());
+                            let cursor_pt =
+                                Point2D::new(world.x as f64, world.y as f64);
+                            if let Some(label) = self
+                                .project
+                                .labels
+                                .iter_mut()
+                                .find(|l| l.id == lid)
+                            {
+                                label.position = cursor_pt;
+                            }
+                        }
+                    } else if let Selection::Opening(oid) = self.editor.selection {
                         if let Some(hover) = response.hover_pos() {
                             let world =
                                 self.editor.canvas.screen_to_world(hover, rect.center());
@@ -367,6 +398,14 @@ impl App {
                             }
                             self.editor.selection = Selection::None;
                         }
+                        Selection::Label(id) => {
+                            self.flush_property_edits();
+                            if let Some(cmd) = RemoveLabelCommand::new(id, &self.project) {
+                                self.history
+                                    .push(Box::new(cmd), &mut self.project);
+                            }
+                            self.editor.selection = Selection::None;
+                        }
                         _ => {}
                     }
                 }
@@ -405,9 +444,17 @@ impl App {
                     if let Some(wall_id) = self.editor.opening_tool.hover_wall_id {
                         let offset = self.editor.opening_tool.hover_offset;
                         let kind = if self.editor.active_tool == EditorTool::Door {
-                            OpeningKind::default_door()
+                            OpeningKind::Door {
+                                height: self.project.defaults.door_height,
+                                width: self.project.defaults.door_width,
+                            }
                         } else {
-                            OpeningKind::default_window()
+                            OpeningKind::Window {
+                                height: self.project.defaults.window_height,
+                                width: self.project.defaults.window_width,
+                                sill_height: self.project.defaults.window_sill_height,
+                                reveal_width: self.project.defaults.window_reveal_width,
+                            }
                         };
                         let opening = Opening::new(kind, Some(wall_id), offset);
                         let opening_id = opening.id;
@@ -421,11 +468,29 @@ impl App {
                 }
             }
 
+            if self.editor.active_tool == EditorTool::Label {
+                if response.clicked() && !space_held {
+                    if let Some(hover) = response.hover_pos() {
+                        let world = self.editor.canvas.screen_to_world(hover, rect.center());
+                        let world_pt = Point2D::new(world.x as f64, world.y as f64);
+                        let label = Label::new("Подпись".to_string(), world_pt);
+                        let label_id = label.id;
+                        self.flush_property_edits();
+                        self.history.push(
+                            Box::new(AddLabelCommand { label }),
+                            &mut self.project,
+                        );
+                        self.editor.selection = Selection::Label(label_id);
+                    }
+                }
+            }
+
             let graph = WallGraph::build(&self.project.walls);
             let new_rooms = graph.detect_rooms(&self.project.walls);
             self.merge_rooms(new_rooms);
 
             self.draw_rooms(&painter, rect);
+            self.draw_labels(&painter, rect);
             self.draw_walls(&painter, rect);
             self.draw_openings(&painter, rect);
 
@@ -449,6 +514,7 @@ impl App {
                     },
                     EditorTool::Door => "Режим двери — перетащите на стену",
                     EditorTool::Window => "Режим окна — перетащите на стену",
+                    EditorTool::Label => "Режим надписи — кликните на холст",
                 };
                 painter.text(
                     rect.center(),

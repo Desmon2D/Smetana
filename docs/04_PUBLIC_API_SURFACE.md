@@ -17,7 +17,7 @@
 | `SideData::ensure_sections(&mut self)` | Post-deserialization fixup (populates if empty) |
 | `SideData::computed_total_length(&self, walls: &[Wall]) -> f64` | Section lengths + junction wall thicknesses |
 | `SideData::recompute_sections(&mut self)` | Rebuild sections from junction t-values |
-| `Wall::new(start: Point2D, end: Point2D) -> Self` | Create wall (thickness=200, height=2700) |
+| `Wall::new(start: Point2D, end: Point2D, thickness: f64, height: f64) -> Self` | Create wall with given thickness and height |
 | `Wall::length(&self) -> f64` | Centerline length mm |
 | `Wall::left_area(&self) -> f64` | Left side gross area mm² |
 | `Wall::right_area(&self) -> f64` | Right side gross area mm² |
@@ -40,11 +40,12 @@
 |-----------|---------|
 | `Room::new(name: String, wall_ids: Vec<Uuid>, wall_sides: Vec<WallSide>) -> Self` | Create room |
 
-## `src/model/project.rs` — Project, SideServices
+## `src/model/project.rs` — Project, ProjectDefaults, SideServices
 
 | Signature | Purpose |
 |-----------|---------|
-| `Project::new(name: String) -> Self` | Create empty project |
+| `ProjectDefaults::default() -> Self` | Standard defaults (wall 200×2700, door 2100×900, window 1400×1200/900/250) |
+| `Project::new(name: String) -> Self` | Create empty project with default `ProjectDefaults` |
 | `SideServices::ensure_section(&mut self, section_index: usize) -> &mut Vec<AssignedService>` | Ensure section exists, return mutable ref |
 | `SideServices::all_services(&self) -> impl Iterator<Item = &AssignedService>` | Flat iterator over all sections |
 | `SideServices::is_empty(&self) -> bool` | True if no sections have services |
@@ -210,6 +211,7 @@
 | `toolbar.rs` | `handle_keyboard_shortcuts(&mut self, ctx)` | Ctrl+Z/Y/S/N/O, V/W/D/O tool hotkeys |
 | `toolbar.rs` | `show_toolbar(&mut self, ctx)` | Top panel: tool buttons, undo/redo, save, export, new project dialog |
 | `toolbar.rs` | `show_left_panel(&mut self, ctx)` | Left panel: project structure tree, room list |
+| `toolbar.rs` | `show_project_settings_window(&mut self, ctx)` | Floating window: edit project defaults (wall/door/window dimensions) |
 | `project_list.rs` | `show_project_list(&mut self, ctx)` | Startup screen: create/open/delete projects |
 | `properties_panel.rs` | `show_right_panel(&mut self, ctx)` | Right panel: property editors, service lists |
 | `property_edits.rs` | `update_edit_snapshots(&mut self)` | Detect selection change, flush if snapshot mismatch |

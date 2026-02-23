@@ -17,6 +17,8 @@
 | `new_project_name` | `String` | Text input for new project name | User typing |
 | `confirm_delete` | `Option<usize>` | Index of project pending delete confirmation | Delete button click |
 | `show_new_project_dialog` | `bool` | Whether the "new project" dialog is open | Ctrl+N, toolbar button |
+| `new_project_defaults` | `ProjectDefaults` | Temporary defaults for new project dialog | User editing in dialog |
+| `show_project_settings` | `bool` | Whether the project settings window is open | "Настройки" toolbar button |
 
 ### Project Data State
 

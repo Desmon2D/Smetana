@@ -684,6 +684,60 @@ impl App {
         }
     }
 
+    pub(super) fn draw_labels(&self, painter: &egui::Painter, rect: egui::Rect) {
+        let center = rect.center();
+        let selected_label_id = match self.editor.selection {
+            Selection::Label(id) => Some(id),
+            _ => None,
+        };
+
+        let normal_color = egui::Color32::from_rgb(220, 220, 225);
+        let selected_color = egui::Color32::from_rgb(255, 255, 255);
+
+        for label in &self.project.labels {
+            if label.text.is_empty() {
+                continue;
+            }
+            let screen_pos = self.editor.canvas.world_to_screen(
+                egui::pos2(label.position.x as f32, label.position.y as f32),
+                center,
+            );
+            let is_selected = selected_label_id == Some(label.id);
+            let color = if is_selected { selected_color } else { normal_color };
+            let font_size = label.font_size as f32 * self.label_scale;
+
+            paint_rotated_text(
+                painter,
+                screen_pos,
+                label.text.clone(),
+                egui::FontId::proportional(font_size),
+                color,
+                label.rotation as f32,
+            );
+
+            if is_selected {
+                let galley = painter.layout_no_wrap(
+                    label.text.clone(),
+                    egui::FontId::proportional(font_size),
+                    color,
+                );
+                let w = galley.size().x;
+                let h = galley.size().y;
+                let pad = 3.0;
+                let sel_rect = egui::Rect::from_center_size(
+                    screen_pos,
+                    egui::vec2(w + pad * 2.0, h + pad * 2.0),
+                );
+                painter.rect_stroke(
+                    sel_rect,
+                    2.0,
+                    egui::Stroke::new(1.5, egui::Color32::from_rgb(60, 160, 255)),
+                    egui::StrokeKind::Outside,
+                );
+            }
+        }
+    }
+
     pub(super) fn draw_opening_preview(&self, painter: &egui::Painter, rect: egui::Rect) {
         let center = rect.center();
         let wall_id = match self.editor.opening_tool.hover_wall_id {

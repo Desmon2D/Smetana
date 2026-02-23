@@ -321,6 +321,7 @@ impl WallGraph {
 
             let mut wall_ids = Vec::new();
             let mut wall_sides = Vec::new();
+            let mut wall_segments = Vec::new();
 
             for edge in cycle {
                 let wall_id = edge.wall_id;
@@ -337,7 +338,18 @@ impl WallGraph {
                 };
 
                 let from_pos = self.vertices[edge.from].position;
-                let forward = from_pos.distance_to(wall.start) < MERGE_EPSILON;
+                let to_pos = self.vertices[edge.to].position;
+
+                // Use dot product of edge direction with wall direction to
+                // determine forward/backward. This works correctly for
+                // mid-wall segments at T-junctions (where from_pos is not
+                // near wall.start).
+                let wall_dx = wall.end.x - wall.start.x;
+                let wall_dy = wall.end.y - wall.start.y;
+                let edge_dx = to_pos.x - from_pos.x;
+                let edge_dy = to_pos.y - from_pos.y;
+                let dot = wall_dx * edge_dx + wall_dy * edge_dy;
+                let forward = dot > 0.0;
 
                 // Wall side determination:
                 // "Left" = left side when looking from wall.start to wall.end
@@ -353,8 +365,14 @@ impl WallGraph {
                     (true, false) | (false, true) => WallSide::Right,
                 };
 
+                // Store segment endpoints in cycle traversal order so
+                // that seg[i].1 is the shared vertex with the next wall
+                // (needed by centerline_area). The perimeter computation
+                // uses min/max of projected t values, so ordering doesn't
+                // matter there.
                 wall_ids.push(wall_id);
                 wall_sides.push(side);
+                wall_segments.push((from_pos, to_pos));
             }
 
             if wall_ids.len() >= 3 {
@@ -362,6 +380,7 @@ impl WallGraph {
                     format!("Комната {}", i + 1),
                     wall_ids,
                     wall_sides,
+                    wall_segments,
                 ));
             }
         }

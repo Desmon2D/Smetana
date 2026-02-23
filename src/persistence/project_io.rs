@@ -105,6 +105,8 @@ mod tests {
         project.walls.push(Wall::new(
             Point2D::new(0.0, 0.0),
             Point2D::new(4000.0, 0.0),
+            200.0,
+            2700.0,
         ));
 
         // Save

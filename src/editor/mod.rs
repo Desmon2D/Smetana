@@ -23,6 +23,7 @@ pub enum EditorTool {
     Wall,
     Door,
     Window,
+    Label,
 }
 
 /// What kind of object is currently selected.
@@ -32,6 +33,7 @@ pub enum Selection {
     Wall(Uuid),
     Opening(Uuid),
     Room(Uuid),
+    Label(Uuid),
 }
 
 /// Editor state: active tool, selection, and canvas viewport.

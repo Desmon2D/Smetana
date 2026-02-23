@@ -97,9 +97,26 @@ impl SideData {
         }
     }
 
-    /// Gross area in mm² (trapezoid formula)
+    /// Gross area in mm² (trapezoid formula) from side-level fields.
     pub fn gross_area(&self) -> f64 {
         self.length * (self.height_start + self.height_end) / 2.0
+    }
+
+    /// Gross area in mm² computed as the sum of section gross areas.
+    pub fn computed_gross_area(&self) -> f64 {
+        self.sections.iter().map(|s| s.gross_area()).sum()
+    }
+
+    /// Weighted average height (mm) across sections.
+    pub fn average_height(&self) -> f64 {
+        let total_length: f64 = self.sections.iter().map(|s| s.length).sum();
+        if total_length < 0.001 {
+            return (self.height_start + self.height_end) / 2.0;
+        }
+        let weighted: f64 = self.sections.iter()
+            .map(|s| s.length * (s.height_start + s.height_end) / 2.0)
+            .sum();
+        weighted / total_length
     }
 
     /// Number of sections (1 if no junctions, N+1 if N junctions).
@@ -107,23 +124,93 @@ impl SideData {
         if self.junctions.is_empty() { 1 } else { self.junctions.len() + 1 }
     }
 
-    /// Insert a junction and recompute sections.
+    /// Update side-level aggregate fields from sections.
+    pub fn sync_from_sections(&mut self) {
+        self.length = self.sections.iter().map(|s| s.length).sum();
+        if let Some(first) = self.sections.first() {
+            self.height_start = first.height_start;
+        }
+        if let Some(last) = self.sections.last() {
+            self.height_end = last.height_end;
+        }
+    }
+
+    /// Insert a junction, splitting the affected section instead of regenerating all.
     /// If a junction already exists at the same `t` position (within 0.001),
     /// the insertion is skipped to avoid duplicate zero-length sections.
     pub fn add_junction(&mut self, wall_id: Uuid, t: f64) {
         if self.junctions.iter().any(|j| (j.t - t).abs() < 0.001) {
             return;
         }
-        // Insert sorted by t
+
+        // Build boundary intervals from existing junctions
+        let mut boundaries = Vec::with_capacity(self.junctions.len() + 2);
+        boundaries.push(0.0);
+        for j in &self.junctions {
+            boundaries.push(j.t);
+        }
+        boundaries.push(1.0);
+
+        // Find which section contains t
+        let section_idx = boundaries.windows(2)
+            .position(|w| t > w[0] - 0.0001 && t < w[1] + 0.0001)
+            .unwrap_or(0);
+
+        let t_start = boundaries[section_idx];
+        let t_end = boundaries[section_idx + 1];
+        let span = t_end - t_start;
+
+        if span < 0.0001 {
+            return;
+        }
+
+        let r = (t - t_start) / span;
+
+        // Split the section at position r
+        if let Some(old_section) = self.sections.get(section_idx) {
+            let old_len = old_section.length;
+            let old_h_start = old_section.height_start;
+            let old_h_end = old_section.height_end;
+            let mid_height = old_h_start + (old_h_end - old_h_start) * r;
+
+            let left_half = SectionData {
+                length: old_len * r,
+                height_start: old_h_start,
+                height_end: mid_height,
+            };
+            let right_half = SectionData {
+                length: old_len * (1.0 - r),
+                height_start: mid_height,
+                height_end: old_h_end,
+            };
+
+            self.sections[section_idx] = left_half;
+            self.sections.insert(section_idx + 1, right_half);
+        }
+
+        // Insert junction sorted by t
         let pos = self.junctions.iter().position(|j| j.t > t).unwrap_or(self.junctions.len());
         self.junctions.insert(pos, SideJunction { wall_id, t });
-        self.recompute_sections();
+
+        self.sync_from_sections();
     }
 
-    /// Remove a junction by connecting wall ID and recompute sections.
+    /// Remove a junction by connecting wall ID, merging the adjacent sections.
     pub fn remove_junction(&mut self, wall_id: Uuid) {
-        self.junctions.retain(|j| j.wall_id != wall_id);
-        self.recompute_sections();
+        if let Some(k) = self.junctions.iter().position(|j| j.wall_id == wall_id) {
+            // Merge sections[k] and sections[k+1]
+            if k + 1 < self.sections.len() {
+                let merged = SectionData {
+                    length: self.sections[k].length + self.sections[k + 1].length,
+                    height_start: self.sections[k].height_start,
+                    height_end: self.sections[k + 1].height_end,
+                };
+                self.sections[k] = merged;
+                self.sections.remove(k + 1);
+            }
+            self.junctions.remove(k);
+            self.sync_from_sections();
+        }
     }
 
     /// Ensure sections are populated (post-deserialization fixup for old data).
@@ -190,15 +277,15 @@ pub struct Wall {
 }
 
 impl Wall {
-    pub fn new(start: Point2D, end: Point2D) -> Self {
+    pub fn new(start: Point2D, end: Point2D, thickness: f64, height: f64) -> Self {
         let length = start.distance_to(end);
         Self {
             id: Uuid::new_v4(),
             start,
             end,
-            thickness: 200.0,
-            left_side: SideData::new(length, 2700.0, 2700.0),
-            right_side: SideData::new(length, 2700.0, 2700.0),
+            thickness,
+            left_side: SideData::new(length, height, height),
+            right_side: SideData::new(length, height, height),
             openings: Vec::new(),
         }
     }

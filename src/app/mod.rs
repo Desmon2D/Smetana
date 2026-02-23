@@ -2,8 +2,8 @@ use eframe::egui;
 
 use crate::editor::EditorState;
 use crate::editor::EditorTool;
-use crate::history::{History, WallProps};
-use crate::model::{OpeningKind, PriceList, Project, Room, WallSide};
+use crate::history::{History, LabelProps, WallProps};
+use crate::model::{OpeningKind, PriceList, Project, ProjectDefaults, Room, WallSide};
 use crate::persistence::{list_project_entries, load_project, save_project, ProjectEntry};
 
 mod canvas;
@@ -36,12 +36,15 @@ pub struct App {
     new_project_name: String,
     confirm_delete: Option<usize>,
     show_new_project_dialog: bool,
+    new_project_defaults: ProjectDefaults,
+    show_project_settings: bool,
 
     pub project: Project,
     pub editor: EditorState,
     pub history: History,
     wall_edit_snapshot: Option<(uuid::Uuid, WallProps)>,
     opening_edit_snapshot: Option<(uuid::Uuid, OpeningKind)>,
+    label_edit_snapshot: Option<(uuid::Uuid, LabelProps)>,
     pub price_list: PriceList,
     selected_service_idx: Option<usize>,
     status_message: Option<String>,
@@ -65,12 +68,15 @@ impl App {
             new_project_name: String::new(),
             confirm_delete: None,
             show_new_project_dialog: false,
+            new_project_defaults: ProjectDefaults::default(),
+            show_project_settings: false,
 
             project: Project::new("Новый проект".to_string()),
             editor: EditorState::default(),
             history: History::new(),
             wall_edit_snapshot: None,
             opening_edit_snapshot: None,
+            label_edit_snapshot: None,
             price_list: PriceList::new("Прайс-лист".to_string()),
             selected_service_idx: None,
             status_message: None,
@@ -99,6 +105,7 @@ impl App {
                 self.history = History::new();
                 self.wall_edit_snapshot = None;
                 self.opening_edit_snapshot = None;
+                self.label_edit_snapshot = None;
                 self.status_message = None;
                 self.last_saved_version = 0;
                 self.dirty = false;
@@ -133,14 +140,16 @@ impl App {
         }
     }
 
-    fn create_new_project(&mut self, name: String) {
-        let project = Project::new(name);
+    fn create_new_project(&mut self, name: String, defaults: ProjectDefaults) {
+        let mut project = Project::new(name);
+        project.defaults = defaults;
         let _ = save_project(&project);
         self.project = project;
         self.editor = EditorState::default();
         self.history = History::new();
         self.wall_edit_snapshot = None;
         self.opening_edit_snapshot = None;
+        self.label_edit_snapshot = None;
         self.status_message = None;
         self.last_saved_version = 0;
         self.dirty = false;
@@ -209,6 +218,7 @@ impl eframe::App for App {
                 self.show_right_panel(ctx);
                 self.show_price_list_window_ui(ctx);
                 self.show_service_picker_window(ctx);
+                self.show_project_settings_window(ctx);
                 self.show_canvas(ctx);
                 self.auto_save();
             }

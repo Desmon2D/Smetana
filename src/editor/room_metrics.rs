@@ -25,6 +25,8 @@ pub fn compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics> 
         return None;
     }
 
+    let has_segments = room.wall_segments.len() == room.wall_ids.len();
+
     // Build offset lines for each wall (inner polygon)
     let mut offset_segments: Vec<(Point2D, Point2D)> = Vec::new();
 
@@ -33,7 +35,16 @@ pub fn compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics> 
         let side = room.wall_sides[i];
         let half_t = wall.thickness / 2.0;
 
-        // Wall direction vector
+        // Use segment endpoints when available (correct for T-junction
+        // segments), otherwise fall back to full wall extent.
+        let (raw_start, raw_end) = if has_segments {
+            room.wall_segments[i]
+        } else {
+            (wall.start, wall.end)
+        };
+
+        // Wall direction vector (always from wall.start→wall.end for
+        // consistent normal orientation regardless of segment extent)
         let dx = wall.end.x - wall.start.x;
         let dy = wall.end.y - wall.start.y;
         let len = (dx * dx + dy * dy).sqrt();
@@ -41,14 +52,26 @@ pub fn compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics> 
             return None;
         }
 
+        // Project segment endpoints onto the wall's centerline. At
+        // T-junctions the graph force-merges a connecting wall's endpoint
+        // to the host wall's centerline vertex, displacing it from the
+        // connecting wall's actual centerline. Any perpendicular component
+        // of that displacement would shift the offset line, producing a
+        // wrong inner polygon. Projecting removes the perpendicular error.
+        let (seg_start, seg_end) = {
+            let (_, ps) = raw_start.project_onto_segment(wall.start, wall.end);
+            let (_, pe) = raw_end.project_onto_segment(wall.start, wall.end);
+            (ps, pe)
+        };
+
         // Unit normal pointing toward room interior
         let (nx, ny) = match side {
             WallSide::Left => (-dy / len, dx / len),
             WallSide::Right => (dy / len, -dx / len),
         };
 
-        let offset_start = Point2D::new(wall.start.x + nx * half_t, wall.start.y + ny * half_t);
-        let offset_end = Point2D::new(wall.end.x + nx * half_t, wall.end.y + ny * half_t);
+        let offset_start = Point2D::new(seg_start.x + nx * half_t, seg_start.y + ny * half_t);
+        let offset_end = Point2D::new(seg_end.x + nx * half_t, seg_end.y + ny * half_t);
 
         offset_segments.push((offset_start, offset_end));
     }
@@ -73,7 +96,7 @@ pub fn compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics> 
     let column_area = column_wall_area(room, walls, &inner_polygon);
     let net_area = polygon_area - column_area;
 
-    // Gross area from centerline polygon (wall endpoints, no offset)
+    // Gross area from centerline polygon (segment endpoints, no offset)
     let gross_area = centerline_area(room, walls).unwrap_or(polygon_area);
 
     // Perimeter from room-facing side section lengths
@@ -81,12 +104,45 @@ pub fn compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics> 
     let mut perimeter = 0.0;
     for (i, wall_id) in room.wall_ids.iter().enumerate() {
         let wall = walls.iter().find(|w| w.id == *wall_id)?;
-        let side = match room.wall_sides[i] {
+        let side_data = match room.wall_sides[i] {
             WallSide::Left => &wall.left_side,
             WallSide::Right => &wall.right_side,
         };
-        let section_sum: f64 = side.sections.iter().map(|s| s.length).sum();
-        perimeter += section_sum;
+
+        if has_segments {
+            // Only sum sections within the segment's t-range
+            let (seg_start, seg_end) = room.wall_segments[i];
+            let wall_len = wall.length();
+            if wall_len < 1e-6 {
+                continue;
+            }
+            let t_seg_start = project_t(seg_start, wall);
+            let t_seg_end = project_t(seg_end, wall);
+            let t_lo = t_seg_start.min(t_seg_end);
+            let t_hi = t_seg_start.max(t_seg_end);
+
+            // Build boundary t values from junctions
+            let mut boundaries = vec![0.0_f64];
+            for j in &side_data.junctions {
+                boundaries.push(j.t);
+            }
+            boundaries.push(1.0);
+
+            for (k, section) in side_data.sections.iter().enumerate() {
+                if k >= boundaries.len() - 1 {
+                    break;
+                }
+                let s_lo = boundaries[k];
+                let s_hi = boundaries[k + 1];
+                // Include section if it overlaps the segment range
+                if s_hi > t_lo + 0.001 && s_lo < t_hi - 0.001 {
+                    perimeter += section.length;
+                }
+            }
+        } else {
+            let section_sum: f64 = side_data.sections.iter().map(|s| s.length).sum();
+            perimeter += section_sum;
+        }
     }
 
     Some(RoomMetrics {
@@ -95,6 +151,17 @@ pub fn compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics> 
         net_area,
         perimeter,
     })
+}
+
+/// Project a point onto a wall's centerline and return the parametric t value.
+fn project_t(point: Point2D, wall: &Wall) -> f64 {
+    let dx = wall.end.x - wall.start.x;
+    let dy = wall.end.y - wall.start.y;
+    let len_sq = dx * dx + dy * dy;
+    if len_sq < 1e-12 {
+        return 0.0;
+    }
+    ((point.x - wall.start.x) * dx + (point.y - wall.start.y) * dy) / len_sq
 }
 
 /// Shoelace formula — absolute area of a simple polygon.
@@ -116,30 +183,45 @@ fn centerline_area(room: &Room, walls: &[Wall]) -> Option<f64> {
         return None;
     }
 
+    let has_segments = room.wall_segments.len() == n;
+
     let mut vertices = Vec::with_capacity(n);
 
     for i in 0..n {
         let j = (i + 1) % n;
-        let wall_i = walls.iter().find(|w| w.id == room.wall_ids[i])?;
-        let wall_j = walls.iter().find(|w| w.id == room.wall_ids[j])?;
 
-        // Find the closest pair of endpoints between consecutive walls
-        let candidates = [
-            (wall_i.start, wall_j.start),
-            (wall_i.start, wall_j.end),
-            (wall_i.end, wall_j.start),
-            (wall_i.end, wall_j.end),
-        ];
+        if has_segments {
+            // Use the junction between consecutive segments: segment i's
+            // end should be near segment j's start (they share a vertex
+            // in the room cycle).  Use midpoint for robustness.
+            let seg_i_end = room.wall_segments[i].1;
+            let seg_j_start = room.wall_segments[j].0;
+            vertices.push(Point2D::new(
+                (seg_i_end.x + seg_j_start.x) / 2.0,
+                (seg_i_end.y + seg_j_start.y) / 2.0,
+            ));
+        } else {
+            // Legacy fallback: find closest endpoint pair between walls
+            let wall_i = walls.iter().find(|w| w.id == room.wall_ids[i])?;
+            let wall_j = walls.iter().find(|w| w.id == room.wall_ids[j])?;
 
-        let &(best_pt, _) = candidates
-            .iter()
-            .min_by(|(a1, b1), (a2, b2)| {
-                a1.distance_to(*b1)
-                    .partial_cmp(&a2.distance_to(*b2))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })?;
+            let candidates = [
+                (wall_i.start, wall_j.start),
+                (wall_i.start, wall_j.end),
+                (wall_i.end, wall_j.start),
+                (wall_i.end, wall_j.end),
+            ];
 
-        vertices.push(best_pt);
+            let &(best_pt, _) = candidates
+                .iter()
+                .min_by(|(a1, b1), (a2, b2)| {
+                    a1.distance_to(*b1)
+                        .partial_cmp(&a2.distance_to(*b2))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })?;
+
+            vertices.push(best_pt);
+        }
     }
 
     Some(shoelace_area(&vertices))

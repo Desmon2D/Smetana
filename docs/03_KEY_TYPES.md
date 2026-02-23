@@ -122,7 +122,25 @@ pub struct Room {
 }
 ```
 
-### `AssignedService` — `src/model/project.rs:8`
+### `ProjectDefaults` — `src/model/project.rs:9`
+
+```rust
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectDefaults {
+    pub wall_thickness: f64,       // mm (default 200)
+    pub wall_height: f64,          // mm (default 2700)
+    pub door_height: f64,          // mm (default 2100)
+    pub door_width: f64,           // mm (default 900)
+    pub window_height: f64,        // mm (default 1400)
+    pub window_width: f64,         // mm (default 1200)
+    pub window_sill_height: f64,   // mm (default 900)
+    pub window_reveal_width: f64,  // mm (default 250)
+}
+```
+
+Per-project configurable defaults used when creating new walls, doors, and windows. Set at project creation, editable via project settings window.
+
+### `AssignedService` — `src/model/project.rs:43`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,7 +169,7 @@ pub struct WallSideServices {
 }
 ```
 
-### `Project` — `src/model/project.rs:48`
+### `Project` — `src/model/project.rs:83`
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +183,7 @@ pub struct Project {
     pub wall_services: HashMap<Uuid, WallSideServices>,
     pub opening_services: HashMap<Uuid, Vec<AssignedService>>,
     pub room_services: HashMap<Uuid, Vec<AssignedService>>,
+    pub defaults: ProjectDefaults,  // #[serde(default)] for backward compat
 }
 ```
 

@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::editor::room_metrics::compute_room_metrics;
 use crate::model::{AssignedService, OpeningKind, PriceList, Project, UnitType, WallSide,
-                   opening_area_mm2, wall_side_quantity, opening_quantity, room_quantity};
+                   opening_area_mm2, wall_side_quantity, wall_section_quantity, opening_quantity, room_quantity};
 
 pub(super) fn write_rooms_sheet(
     sheet: &mut Worksheet,
@@ -368,6 +368,7 @@ pub(super) fn write_estimate_sheet(
                               label: &str,
                               obj_id: Uuid,
                               wall_side: Option<WallSide>,
+                              section_index: Option<usize>,
                               services: &[AssignedService]|
      -> Result<(), String> {
         for svc in services {
@@ -376,7 +377,17 @@ pub(super) fn write_estimate_sheet(
                 None => continue,
             };
             let price = svc.custom_price.unwrap_or(tmpl.price_per_unit);
-            let qty = compute_quantity(project, tmpl.unit_type, obj_id, wall_side);
+            let qty = match (wall_side, section_index) {
+                (Some(side), Some(si)) => {
+                    // Per-section wall service: use section quantity
+                    if let Some(wall) = project.walls.iter().find(|w| w.id == obj_id) {
+                        wall_section_quantity(tmpl.unit_type, wall, side, si, &project.openings)
+                    } else {
+                        compute_quantity(project, tmpl.unit_type, obj_id, Some(side))
+                    }
+                }
+                _ => compute_quantity(project, tmpl.unit_type, obj_id, wall_side),
+            };
             let cost = qty * price;
             *total += cost;
 
@@ -415,16 +426,17 @@ pub(super) fn write_estimate_sheet(
                     &room.name,
                     room.id,
                     None,
+                    None,
                     svcs,
                 )?;
             }
         }
 
-        // Wall services for walls in this room (per-side)
+        // Wall services for walls in this room (per-side, per-section)
         for (wi, wall_id) in room.wall_ids.iter().enumerate() {
             if let Some(wall_svcs) = project.wall_services.get(wall_id) {
                 // Left side services
-                for section in &wall_svcs.left.sections {
+                for (si, section) in wall_svcs.left.sections.iter().enumerate() {
                     if !section.is_empty() {
                         let label = format!("{} / Стена С{} (лев.)", room.name, wi + 1);
                         write_services(
@@ -434,12 +446,13 @@ pub(super) fn write_estimate_sheet(
                             &label,
                             *wall_id,
                             Some(WallSide::Left),
+                            Some(si),
                             section,
                         )?;
                     }
                 }
                 // Right side services
-                for section in &wall_svcs.right.sections {
+                for (si, section) in wall_svcs.right.sections.iter().enumerate() {
                     if !section.is_empty() {
                         let label = format!("{} / Стена С{} (прав.)", room.name, wi + 1);
                         write_services(
@@ -449,6 +462,7 @@ pub(super) fn write_estimate_sheet(
                             &label,
                             *wall_id,
                             Some(WallSide::Right),
+                            Some(si),
                             section,
                         )?;
                     }
@@ -472,6 +486,7 @@ pub(super) fn write_estimate_sheet(
                                 &mut grand_total,
                                 &label,
                                 opening.id,
+                                None,
                                 None,
                                 svcs,
                             )?;
@@ -498,6 +513,7 @@ pub(super) fn write_estimate_sheet(
                     &mut grand_total,
                     &label,
                     opening.id,
+                    None,
                     None,
                     svcs,
                 )?;

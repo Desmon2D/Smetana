@@ -97,24 +97,24 @@ pub(super) fn compute_hub_polygon(
     let n = waj_list.len();
     let mut hub_vertices: Vec<egui::Pos2> = Vec::new();
 
-    // Walk walls in angular order. Between consecutive walls i and i+1,
-    // the edge facing the gap is: wall_i.right, wall_{i+1}.left.
-    // We intersect the right edge line of wall_i with the left edge line of wall_{i+1}.
-    // The intersection (or midpoint fallback) becomes a hub vertex and also
-    // the adjusted joint vertex for both walls.
+    // Walk walls in angular order (sorted by increasing atan2 angle =
+    // clockwise on screen with Y-down). Between consecutive walls i and
+    // i+1, the gap is bounded by wall_i's CW-facing edge and wall_{i+1}'s
+    // CCW-facing edge. Which wall edge faces CW/CCW depends on is_end:
+    //   is_end=false → CW-facing = left,  CCW-facing = right
+    //   is_end=true  → CW-facing = right, CCW-facing = left
 
     for i in 0..n {
         let next = (i + 1) % n;
         let wa = &waj_list[i];
         let wb = &waj_list[next];
 
-        // Between wa (right side) and wb (left side).
-        let miter = line_line_intersection(wa.right, wa.dir, wb.left, wb.dir);
+        let miter = line_line_intersection(wa.cw_edge(), wa.dir, wb.ccw_edge(), wb.dir);
 
         let max_half = wa.half_thick.max(wb.half_thick);
         let junction_approx = egui::pos2(
-            (wa.right.x + wb.left.x) / 2.0,
-            (wa.right.y + wb.left.y) / 2.0,
+            (wa.cw_edge().x + wb.ccw_edge().x) / 2.0,
+            (wa.cw_edge().y + wb.ccw_edge().y) / 2.0,
         );
         let max_dist = max_half * MAX_MITER_RATIO;
 
@@ -126,16 +126,22 @@ pub(super) fn compute_hub_polygon(
         hub_vertices.push(pt);
     }
 
-    // Set joint vertices: wall i gets right = hub[i], left = hub[i-1].
+    // Set joint vertices: hub[i] is the CW-side miter point for wall i,
+    // hub[prev] is the CCW-side miter point. Map back to left/right
+    // based on is_end.
     for i in 0..n {
         let prev = if i == 0 { n - 1 } else { i - 1 };
         let wa = &waj_list[i];
+        let (left, right) = if wa.is_end {
+            // is_end: CW-facing = right, CCW-facing = left
+            (hub_vertices[prev], hub_vertices[i])
+        } else {
+            // !is_end: CW-facing = left, CCW-facing = right
+            (hub_vertices[i], hub_vertices[prev])
+        };
         joints.insert(
             (wa.wall_id, wa.is_end),
-            JointVertices {
-                left: hub_vertices[prev],
-                right: hub_vertices[i],
-            },
+            JointVertices { left, right },
         );
     }
 

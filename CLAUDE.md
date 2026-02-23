@@ -36,7 +36,7 @@ src/
 │   ├── mod.rs               # App struct, AppScreen enum, eframe::App impl, project management
 │   ├── canvas.rs            # Central panel: pan/zoom input, tool dispatch, room detection trigger
 │   ├── canvas_draw.rs       # Wall/opening/room/preview rendering (two-pass: geometry then overlays)
-│   ├── toolbar.rs           # Top toolbar, left panel, keyboard shortcuts
+│   ├── toolbar.rs           # Top toolbar, left panel, keyboard shortcuts, project settings window
 │   ├── project_list.rs      # ProjectList startup screen
 │   ├── properties_panel.rs  # Right panel: wall/opening/room property editors
 │   ├── property_edits.rs    # Deferred property edit → history command flushing, validation
@@ -47,7 +47,7 @@ src/
 │   ├── wall.rs              # Wall, Point2D, SideData, SectionData, SideJunction
 │   ├── opening.rs           # Opening, OpeningKind (Door | Window)
 │   ├── room.rs              # Room, WallSide
-│   ├── project.rs           # Project, AssignedService, SideServices, WallSideServices
+│   ├── project.rs           # Project, ProjectDefaults, AssignedService, SideServices, WallSideServices
 │   ├── price.rs             # PriceList, ServiceTemplate, UnitType, TargetObjectType
 │   └── quantity.rs          # Quantity computation functions (wall/opening/room)
 ├── editor/                  # Canvas viewport and drawing tools
@@ -82,13 +82,14 @@ src/
 - **Deferred property edits**: DragValue mutations go directly to project fields. On selection change or before next command, `flush_property_edits()` compares against a snapshot and pushes a `ModifyWallCommand`/`ModifyOpeningCommand` if changed.
 - **Services assigned per-object**: `Project.wall_services` is `HashMap<Uuid, WallSideServices>` (per-side, per-section). `opening_services` and `room_services` are `HashMap<Uuid, Vec<AssignedService>>`.
 - **Canvas label scaling**: All canvas label font sizes are multiplied by `App.label_scale` (default 1.0, range 0.5–3.0). Controlled via a slider in the left panel. Affects wall thickness/section labels, room name/area labels, opening previews, and wall preview lengths.
+- **Per-project defaults**: `ProjectDefaults` (stored in `Project.defaults`, `#[serde(default)]` for backward compatibility) holds default dimensions for new walls (thickness, height), doors (height, width), and windows (height, width, sill, reveal). Configured at project creation and editable later via the "Настройки" floating window. `Wall::new()` takes explicit `thickness` and `height` parameters; opening creation constructs `OpeningKind` variants from project defaults.
 - **Wall rendering two-pass**: `draw_walls()` uses a two-pass approach. Pass 1 draws geometry (opaque section quads per side, junction ticks, wall outline, hub polygons). Pass 2 draws overlays on top (selection highlights, endpoint circles, text labels). This ensures indicators and labels are never hidden by joint fills. Each wall section is an opaque half-width polygon (centerline→edge) — no transparent overlays. Unselected walls use neutral gray fill; selected walls color each section with the shared `SECTION_COLORS` palette (global index across both sides — left sections first, then right — so every section gets a unique color). Section labels are always shown (colored when selected, neutral gray when not). Junction ticks only appear on selected walls.
 
 ### App Screens
 
 `AppScreen` enum controls top-level navigation:
 - `ProjectList` — startup screen listing saved projects
-- `Editor` — main editor with toolbar, canvas, property panel, floating windows (price list, service picker)
+- `Editor` — main editor with toolbar, canvas, property panel, floating windows (price list, service picker, project settings)
 
 ### Quantity Computation
 
@@ -106,9 +107,9 @@ Service quantities (in `model/quantity.rs`) depend on `UnitType`:
 ## Conventions
 
 - All dimensions are in millimeters internally; display converts to m/m² where needed
-- Wall defaults: thickness 200mm, height 2700mm
-- Door defaults: 2100×900mm
-- Window defaults: 1400×1200mm, sill 900mm, reveal 250mm
+- Wall defaults: thickness 200mm, height 2700mm (configurable per-project via `ProjectDefaults`)
+- Door defaults: 2100×900mm (configurable per-project via `ProjectDefaults`)
+- Window defaults: 1400×1200mm, sill 900mm, reveal 250mm (configurable per-project via `ProjectDefaults`)
 - Wall area uses trapezoid formula: `length × (height_start + height_end) / 2`
 - Window reveal perimeter: `2×height + 2×width` (all 4 sides)
 - Door perimeter: `2×height + width` (no threshold)

@@ -2,7 +2,7 @@ use eframe::egui;
 
 use crate::editor::Selection;
 use crate::editor::room_metrics::compute_room_metrics;
-use crate::history::WallProps;
+use crate::history::{LabelProps, WallProps};
 use crate::model::{OpeningKind, TargetObjectType, WallSide, section_net_area};
 use super::{App, ServiceTarget};
 
@@ -394,6 +394,55 @@ impl App {
                                 rows,
                                 |p| &mut p.room_services,
                             );
+                        }
+                    }
+                    Selection::Label(id) => {
+                        if self.label_edit_snapshot.is_none() {
+                            if let Some(l) = self.project.labels.iter().find(|l| l.id == id) {
+                                self.label_edit_snapshot = Some((id, LabelProps {
+                                    text: l.text.clone(),
+                                    font_size: l.font_size,
+                                    rotation: l.rotation,
+                                }));
+                            }
+                        }
+
+                        if let Some(label) =
+                            self.project.labels.iter_mut().find(|l| l.id == id)
+                        {
+                            ui.label("Подпись");
+                            ui.add_space(8.0);
+
+                            ui.horizontal(|ui| {
+                                ui.label("Текст:");
+                                if ui.text_edit_singleline(&mut label.text).changed() {
+                                    self.dirty = true;
+                                }
+                            });
+
+                            ui.horizontal(|ui| {
+                                ui.label("Размер шрифта:");
+                                ui.add(
+                                    egui::DragValue::new(&mut label.font_size)
+                                        .range(6.0..=72.0)
+                                        .speed(0.5),
+                                );
+                            });
+
+                            let mut rotation_deg = label.rotation.to_degrees();
+                            ui.horizontal(|ui| {
+                                ui.label("Поворот (°):");
+                                if ui.add(
+                                    egui::DragValue::new(&mut rotation_deg)
+                                        .range(0.0..=360.0)
+                                        .speed(1.0),
+                                ).changed() {
+                                    label.rotation = rotation_deg.to_radians();
+                                }
+                            });
+                        } else {
+                            ui.label("Подпись не найдена");
+                            self.editor.selection = Selection::None;
                         }
                     }
                 }
