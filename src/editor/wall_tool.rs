@@ -19,6 +19,9 @@ pub struct WallTool {
     pub chain_start: Option<Point2D>,
     /// The last snap result (for determining T-junction attachment on click).
     pub last_snap: Option<SnapResult>,
+    /// Snap result from the first click (start point). Stored separately so that
+    /// only the second click's snap produces a junction_target.
+    pub start_snap: Option<SnapResult>,
 }
 
 impl Default for WallTool {
@@ -28,6 +31,7 @@ impl Default for WallTool {
             preview_end: None,
             chain_start: None,
             last_snap: None,
+            start_snap: None,
         }
     }
 }
@@ -39,6 +43,7 @@ impl WallTool {
         self.preview_end = None;
         self.chain_start = None;
         self.last_snap = None;
+        self.start_snap = None;
     }
 
     /// Continue chaining from the given endpoint.

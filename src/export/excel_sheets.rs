@@ -38,7 +38,7 @@ pub(super) fn write_rooms_sheet(
     let mut row: u32 = 1;
     for room in &project.rooms {
         let metrics = compute_room_metrics(room, &project.walls);
-        let floor_area_m2 = metrics.as_ref().map_or(0.0, |m| m.area / 1e6);
+        let floor_area_m2 = metrics.as_ref().map_or(0.0, |m| m.net_area / 1e6);
         let perimeter_m = metrics.as_ref().map_or(0.0, |m| m.perimeter / 1e3);
 
         // Gross wall area: use the room-facing side for each wall

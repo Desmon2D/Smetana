@@ -171,31 +171,34 @@ impl App {
             .show(ctx, |ui| {
                 ui.heading("Структура проекта");
                 ui.separator();
-                ui.label(format!("Стен: {}", self.project.walls.len()));
-                ui.label(format!("Проёмов: {}", self.project.openings.len()));
 
-                ui.add_space(8.0);
-                ui.separator();
-                ui.label(format!("Комнаты ({})", self.project.rooms.len()));
-                ui.add_space(4.0);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.label(format!("Стен: {}", self.project.walls.len()));
+                    ui.label(format!("Проёмов: {}", self.project.openings.len()));
 
-                let selected_room = match self.editor.selection {
-                    Selection::Room(id) => Some(id),
-                    _ => None,
-                };
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.label(format!("Комнаты ({})", self.project.rooms.len()));
+                    ui.add_space(4.0);
 
-                let mut clicked_room = None;
-                for room in &self.project.rooms {
-                    let is_selected = selected_room == Some(room.id);
-                    let label = egui::SelectableLabel::new(is_selected, &room.name);
-                    if ui.add(label).clicked() {
-                        clicked_room = Some(room.id);
+                    let selected_room = match self.editor.selection {
+                        Selection::Room(id) => Some(id),
+                        _ => None,
+                    };
+
+                    let mut clicked_room = None;
+                    for room in &self.project.rooms {
+                        let is_selected = selected_room == Some(room.id);
+                        let label = egui::SelectableLabel::new(is_selected, &room.name);
+                        if ui.add(label).clicked() {
+                            clicked_room = Some(room.id);
+                        }
                     }
-                }
 
-                if let Some(id) = clicked_room {
-                    self.editor.selection = Selection::Room(id);
-                }
+                    if let Some(id) = clicked_room {
+                        self.editor.selection = Selection::Room(id);
+                    }
+                });
             });
     }
 }

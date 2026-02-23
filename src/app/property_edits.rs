@@ -46,13 +46,23 @@ impl App {
     pub(super) fn flush_property_edits(&mut self) {
         if let Some((snap_id, old_props)) = self.wall_edit_snapshot.take() {
             if let Some(wall) = self.project.walls.iter().find(|w| w.id == snap_id) {
+                let sections_changed = |old: &SideData, new: &SideData| -> bool {
+                    if old.sections.len() != new.sections.len() {
+                        return true;
+                    }
+                    old.sections.iter().zip(new.sections.iter()).any(|(a, b)| {
+                        (a.length - b.length).abs() > 0.01
+                    })
+                };
                 let changed = (wall.thickness - old_props.thickness).abs() > 0.01
                     || (wall.left_side.length - old_props.left_side.length).abs() > 0.01
                     || (wall.left_side.height_start - old_props.left_side.height_start).abs() > 0.01
                     || (wall.left_side.height_end - old_props.left_side.height_end).abs() > 0.01
                     || (wall.right_side.length - old_props.right_side.length).abs() > 0.01
                     || (wall.right_side.height_start - old_props.right_side.height_start).abs() > 0.01
-                    || (wall.right_side.height_end - old_props.right_side.height_end).abs() > 0.01;
+                    || (wall.right_side.height_end - old_props.right_side.height_end).abs() > 0.01
+                    || sections_changed(&old_props.left_side, &wall.left_side)
+                    || sections_changed(&old_props.right_side, &wall.right_side);
                 if changed {
                     let new_props = WallProps {
                         thickness: wall.thickness,
@@ -137,8 +147,10 @@ impl App {
         }
     }
 
-    pub(super) fn show_side_sections(ui: &mut egui::Ui, side_data: &SideData, side_id: &str) {
-        if !side_data.has_sections() {
+    pub(super) fn show_side_sections(ui: &mut egui::Ui, side_data: &mut SideData, side_id: &str) {
+        // Skip section details when there's only one implicit section
+        // (the side-level fields already show the same data).
+        if side_data.sections.len() <= 1 {
             return;
         }
 
@@ -152,7 +164,7 @@ impl App {
         ];
 
         ui.add_space(4.0);
-        for (i, section) in side_data.sections.iter().enumerate() {
+        for i in 0..side_data.sections.len() {
             let color_idx = i % SECTION_COLORS.len();
             let (cr, cg, cb) = SECTION_COLORS[color_idx];
             let color = egui::Color32::from_rgb(cr, cg, cb);
@@ -163,18 +175,22 @@ impl App {
             });
             ui.indent(format!("{side_id}_section_{i}"), |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Длина:");
-                    ui.label(format!("{:.0} мм", section.length));
+                    ui.label("Длина (мм):");
+                    ui.add(
+                        egui::DragValue::new(&mut side_data.sections[i].length)
+                            .range(1.0..=100000.0)
+                            .speed(10.0),
+                    );
                 });
                 ui.horizontal(|ui| {
                     ui.label("Выс. начала:");
-                    ui.label(format!("{:.0} мм", section.height_start));
+                    ui.label(format!("{:.0} мм", side_data.sections[i].height_start));
                 });
                 ui.horizontal(|ui| {
                     ui.label("Выс. конца:");
-                    ui.label(format!("{:.0} мм", section.height_end));
+                    ui.label(format!("{:.0} мм", side_data.sections[i].height_end));
                 });
-                let area_m2 = section.gross_area() / 1_000_000.0;
+                let area_m2 = side_data.sections[i].gross_area() / 1_000_000.0;
                 ui.horizontal(|ui| {
                     ui.label("Площадь:");
                     ui.label(format!("{:.2} м²", area_m2));

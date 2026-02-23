@@ -110,6 +110,21 @@ pub fn snap(
         x: (world_pos.x / grid_step).round() * grid_step,
         y: (world_pos.y / grid_step).round() * grid_step,
     };
+
+    // Final pass: if a vertex is within 1mm of the grid-snapped position,
+    // prefer the vertex to avoid phantom walls from float rounding.
+    const VERTEX_EPSILON_MM: f64 = 1.0;
+    for wall in walls {
+        for endpoint in [wall.start, wall.end] {
+            if snapped.distance_to(endpoint) < VERTEX_EPSILON_MM {
+                return SnapResult {
+                    position: endpoint,
+                    snap_type: SnapType::Vertex,
+                };
+            }
+        }
+    }
+
     SnapResult {
         position: snapped,
         snap_type: SnapType::Grid,

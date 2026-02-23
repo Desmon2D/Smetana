@@ -14,6 +14,7 @@ impl App {
                 ui.heading("Свойства");
                 ui.separator();
 
+                egui::ScrollArea::vertical().show(ui, |ui| {
                 match self.editor.selection {
                     Selection::None => {
                         ui.label("Ничего не выбрано");
@@ -28,6 +29,19 @@ impl App {
                                 }));
                             }
                         }
+
+                        // Pre-compute junction info before mutable borrow
+                        let (left_has_junctions, left_total, right_has_junctions, right_total) =
+                            if let Some(w) = self.project.walls.iter().find(|w| w.id == id) {
+                                (
+                                    !w.left_side.junctions.is_empty(),
+                                    w.left_side.computed_total_length(&self.project.walls),
+                                    !w.right_side.junctions.is_empty(),
+                                    w.right_side.computed_total_length(&self.project.walls),
+                                )
+                            } else {
+                                (false, 0.0, false, 0.0)
+                            };
 
                         if let Some(wall) = self.project.walls.iter_mut().find(|w| w.id == id) {
                             ui.label("Стена");
@@ -72,11 +86,15 @@ impl App {
                             ui.indent("left_side", |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label("Длина (мм):");
-                                    ui.add(
-                                        egui::DragValue::new(&mut wall.left_side.length)
-                                            .range(1.0..=100000.0)
-                                            .speed(10.0),
-                                    );
+                                    if left_has_junctions {
+                                        ui.label(format!("{:.0}", left_total));
+                                    } else {
+                                        ui.add(
+                                            egui::DragValue::new(&mut wall.left_side.length)
+                                                .range(1.0..=100000.0)
+                                                .speed(10.0),
+                                        );
+                                    }
                                 });
                                 ui.horizontal(|ui| {
                                     ui.label("Высота начала (мм):");
@@ -99,7 +117,7 @@ impl App {
                                     ui.label("Площадь:");
                                     ui.label(format!("{:.2} м²", left_area_m2));
                                 });
-                                Self::show_side_sections(ui, &wall.left_side, "left");
+                                Self::show_side_sections(ui, &mut wall.left_side, "left");
                             });
 
                             ui.add_space(4.0);
@@ -112,11 +130,15 @@ impl App {
                             ui.indent("right_side", |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label("Длина (мм):");
-                                    ui.add(
-                                        egui::DragValue::new(&mut wall.right_side.length)
-                                            .range(1.0..=100000.0)
-                                            .speed(10.0),
-                                    );
+                                    if right_has_junctions {
+                                        ui.label(format!("{:.0}", right_total));
+                                    } else {
+                                        ui.add(
+                                            egui::DragValue::new(&mut wall.right_side.length)
+                                                .range(1.0..=100000.0)
+                                                .speed(10.0),
+                                        );
+                                    }
                                 });
                                 ui.horizontal(|ui| {
                                     ui.label("Высота начала (мм):");
@@ -139,7 +161,7 @@ impl App {
                                     ui.label("Площадь:");
                                     ui.label(format!("{:.2} м²", right_area_m2));
                                 });
-                                Self::show_side_sections(ui, &wall.right_side, "right");
+                                Self::show_side_sections(ui, &mut wall.right_side, "right");
                             });
 
                             ui.add_space(8.0);
@@ -320,8 +342,12 @@ impl App {
 
                             if let Some(m) = &metrics {
                                 ui.horizontal(|ui| {
-                                    ui.label("Площадь:");
-                                    ui.label(format!("{:.2} м²", m.area / 1_000_000.0));
+                                    ui.label("Площадь (брутто):");
+                                    ui.label(format!("{:.2} м²", m.gross_area / 1_000_000.0));
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Площадь (нетто):");
+                                    ui.label(format!("{:.2} м²", m.net_area / 1_000_000.0));
                                 });
                                 ui.horizontal(|ui| {
                                     ui.label("Периметр:");
@@ -360,6 +386,7 @@ impl App {
                         }
                     }
                 }
+                }); // ScrollArea
             });
     }
 }

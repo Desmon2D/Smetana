@@ -1,352 +1,222 @@
-# Implementation Plan: Construction Estimate Application
+# Implementation Plan
 
-Each phase from the technical specification is divided into discrete steps. Each step is a self-contained unit of work that an LLM can implement in a single session.
-
----
-
-## Phase 1: Scaffold and Canvas (Basic Infrastructure)
-
-### Step 1.1 — Project scaffold and dependencies ✅
-- Initialize Rust project with `cargo init`.
-- Configure `Cargo.toml` with dependencies: `eframe`, `egui`, `serde`, `serde_json`, `uuid`, `rfd`, `rust_xlsxwriter`.
-- Create the module directory structure (`model/`, `editor/`, `panels/`, `export/`, `persistence/`).
-- Create empty `mod.rs` files for each module.
-- Verify the project compiles and runs an empty eframe window.
-
-### Step 1.2 — Core data model: Point2D, Wall, Project ✅
-- Define `Point2D` struct (x: f64, y: f64) with Serialize/Deserialize.
-- Define `Wall` struct with fields: id (Uuid), start, end, thickness, height_start, height_end, openings (Vec<Uuid>).
-- Define `Project` struct with fields: id, name, walls, openings, rooms, price_list_id, wall_services, opening_services, room_services.
-- Implement Default values (thickness=200, heights=2700).
-- Derive Serialize/Deserialize for all model structs.
-
-### Step 1.3 — App struct and UI routing ✅
-- Implement the main `App` struct holding `Project` and editor state.
-- Set up `eframe::App` trait implementation with `update()`.
-- Implement basic UI layout: top panel (toolbar placeholder), left panel (placeholder), central canvas area, right panel (placeholder), bottom panel (placeholder).
-- Verify the app launches with the panel layout visible.
-
-### Step 1.4 — Canvas: grid rendering ✅
-- Implement `Canvas` struct with viewport state (offset, zoom).
-- Render a background grid with configurable step size (default 100 mm).
-- Implement adaptive grid density — show/hide sub-grid lines depending on zoom level.
-- Display coordinate readout in a status bar (current cursor position in mm).
-
-### Step 1.5 — Canvas: pan and zoom ✅
-- Implement panning with middle mouse button drag.
-- Implement panning with Space + LMB drag.
-- Implement zoom with mouse wheel (zoom toward cursor position).
-- Clamp zoom to reasonable min/max range.
-- Implement world-to-screen and screen-to-world coordinate conversion methods.
-
-### Step 1.6 — Snap system ✅
-- Implement grid snapping: snap a world coordinate to the nearest grid point.
-- Implement vertex snapping: snap to existing wall endpoints within 15px screen radius.
-- Implement Shift modifier to disable snapping (free drawing).
-- Return a `SnapResult` indicating the snap type and the snapped position.
-
-### Step 1.7 — Project serialization/deserialization ✅
-- Implement `project_io.rs`: save project to `saves/projects/{name}.json`.
-- Implement load project from JSON file.
-- Create `saves/projects/` and `saves/prices/` directories if they don't exist.
-- Test round-trip: create a project with a wall, save, load, verify data integrity.
+Based on `docs/todo.md` requirements. Four sessions, ordered by dependency.
 
 ---
 
-## Phase 2: Drawing Walls
+## Session 1: Snap System Fixes, Snap Indicator, and Wall Endpoint Handles (Req 2 + Req 8)
 
-### Step 2.1 — Wall drawing tool: basic two-click wall creation ✅
-- Implement `WallTool` state machine: Idle → FirstPointSet → Drawing.
-- On first click: record start point (with snap).
-- On mouse move: show a preview line from start to current cursor (with snap).
-- On second click: create a `Wall` and add it to the project.
-- Return to Idle or continue chaining (see next step).
+Foundational fixes to the wall-drawing and selection workflow.
 
-### Step 2.2 — Wall chaining and contour closing ✅
-- After placing a wall, automatically start a new wall from the previous wall's endpoint.
-- Double-click or Esc finishes the chain and returns to Idle.
-- If the user clicks on the chain's starting vertex (within snap radius), close the contour and finish.
+### 1a. Junction creation asymmetry (Req 2, bullet 1)
 
-### Step 2.3 — Wall rendering on canvas ✅
-- Render each wall as a thick line/rectangle on the canvas using the wall's thickness.
-- Compute the perpendicular offset from the wall centerline to draw the rectangle.
-- Use distinct colors for walls (e.g., dark gray fill, black outline).
-- Render wall endpoints as small circles/dots.
+**Problem**: A T-junction is created both when a wall *starts* from a wall-edge snap and when it *ends* there. It should only be created when the **end point** of a new wall lands on a wall's side edge.
 
-### Step 2.4 — Tool selection and toolbar ✅
-- Implement `EditorTool` enum: Select, Wall, Door, Window.
-- Add toolbar buttons in the top panel for switching tools.
-- Implement keyboard shortcuts: V (Select), W (Wall), D (Door), O (Window).
-- Display the currently active tool in the toolbar.
+**Files**: `src/app/canvas.rs`, `src/history.rs`
 
-### Step 2.5 — Selection tool: click selection and deletion ✅
-- Implement `SelectTool`: on click, find the wall nearest to the cursor.
-- Highlight the selected wall (different color/outline).
-- On Delete key press, remove the selected wall from the project.
-- Deselect on Escape or clicking empty space.
+- In `canvas.rs`, the `WallToolState::Idle` branch records the snap but proceeds to `Drawing { start }`. Currently on the second click (`WallToolState::Drawing`), `junction_target` is read from `last_snap` — but the first click's snap can also attach.
+- Fix: save the snap from the *first* click separately (e.g. `start_snap` field on `WallTool`), and only use `last_snap` (from the second click) as the `junction_target` for `AddWallCommand`. The first-click snap should only attach the start vertex to the existing endpoint (vertex snap) — it must **not** create a junction on the host wall.
+- Verify: starting a wall from an existing wall's side should not split that wall into sections.
 
-### Step 2.6 — Wall properties panel ✅
-- When a wall is selected, show its properties in the right panel.
-- Editable fields: thickness (mm), height_start (mm), height_end (mm).
-- Read-only field: length (auto-calculated from start/end).
-- Apply changes immediately to the wall on edit.
+### 1b. Phantom wall on grid coincidence (Req 2, bullet 2)
 
----
+**Problem**: When a vertex and a grid point coincide, grid snap can win due to distance tie. Vertex snap must always take priority.
 
-## Phase 3: Windows and Doors
+**Files**: `src/editor/snap.rs`
 
-### Step 3.1 — Opening data model ✅
-- Define `OpeningKind` enum with `Door { height, width }` and `Window { height, width, sill_height, reveal_width }`.
-- Define `Opening` struct with id, kind, wall_id (Option<Uuid>), offset_along_wall, assigned_services.
-- Implement Default values (Door: 2100x900, Window: 1400x1200, sill=900, reveal=250).
-- Derive Serialize/Deserialize.
+- Current code checks vertex snap within `VERTEX_SNAP_SCREEN_PX` (15px) and grid snap independently. If a vertex sits exactly on a grid point, both distances are ≈0 — but vertex snap's early return should already win.
+- The real issue: when confirming the second point of a wall, the snapped position might be subtly different from an existing vertex because of floating-point rounding in grid snap. Fix by adding a final pass: after grid snap is computed, check if any vertex is within a small epsilon (e.g. 1mm world-space) of the grid-snapped position; if so, substitute the vertex position.
+- Alternatively, increase `VERTEX_SNAP_SCREEN_PX` to 20px so vertex snap catches cases where grid snap would otherwise win at moderate zoom levels.
 
-### Step 3.2 — Opening placement tool: drag-and-drop onto walls ✅
-- Implement `OpeningTool`: user selects Door or Window from toolbar.
-- On click/drag on the canvas, detect if the cursor is over a wall.
-- If over a wall: compute `offset_along_wall`, snap the opening to the wall, show preview.
-- On release over a wall: create the Opening, attach it to the wall (set wall_id, add opening id to wall's openings).
+### 1c. Snap indicator on canvas (Req 2, bullet 3)
 
-### Step 3.3 — Opening rendering on canvas ✅
-- Render doors on their parent wall as a gap/break in the wall with a swing arc indicator.
-- Render windows on their parent wall as a gap with a parallel-line symbol.
-- If an opening has `wall_id == None`, render it in red at its last known position.
+**Problem**: No visual feedback for snap type during wall drawing.
 
-### Step 3.4 — Opening dragging: along wall and between walls ✅
-- When selecting an existing opening, allow dragging it along its wall (update offset_along_wall).
-- If dragged off the wall and onto another wall, re-attach it (update wall_id, offset, update both walls' openings lists).
-- If released outside any wall, set wall_id to None (validation error state).
+**Files**: `src/app/canvas_draw.rs`
 
-### Step 3.5 — Opening validation ✅
-- Check all openings: if any has `wall_id == None`, set a global validation error flag.
-- Validate that the opening fits within the wall length (offset ± width/2 must be within 0..wall_length).
-- Display validation errors in the properties panel.
-- Disable the "Generate Report" button when validation errors exist.
+- Add a new method `draw_snap_indicator(&self, painter, rect)` called during wall tool rendering.
+- Read `self.editor.wall_tool.last_snap` to get the `SnapResult`.
+- Render a colored ring/crosshair at the snapped screen position:
+  - `SnapType::Vertex` → green ring (matching start-point color)
+  - `SnapType::WallEdge` → yellow ring
+  - `SnapType::Grid` → white/gray ring
+  - `SnapType::None` → no indicator (Shift held)
+- Call this from `show_canvas()` in `canvas.rs` when the wall tool is active.
 
-### Step 3.6 — Opening properties panel ✅
-- When an opening is selected, show its properties in the right panel.
-- Door: height (mm), width (mm), depth (read-only, = wall thickness).
-- Window: height (mm), width (mm), sill_height (mm), reveal_width (mm).
-- Apply changes immediately.
+### 1d. Wall endpoint handles: selection-gated rendering (Req 8)
+
+**Problem**: Green/yellow endpoint circles render for all walls. They should only render when the wall is selected.
+
+**Files**: `src/app/canvas_draw.rs`
+
+- In `draw_walls()`, lines 80–82 draw `start_color` and `end_color` circles unconditionally.
+- Move these two `painter.circle_filled(...)` calls inside the `if is_selected { ... }` block (or wrap them with `if is_selected`).
 
 ---
 
-## Phase 4: Room Detection
+## Session 2: Wall Sections Foundation — Implicit Sections, Side Coloring, Selection Highlight, Scrollbars (Req 9 + Req 5)
 
-### Step 4.1 — Wall graph construction ✅
-- Build a planar graph from walls: vertices are unique wall endpoints (merged within snap tolerance), edges are walls.
-- Implement vertex merging: points within a small epsilon are considered the same vertex.
-- Store adjacency data: for each vertex, the sorted list of connected edges with angles.
+Establishes the visual and data foundation for sections, which later requirements depend on.
 
-### Step 4.2 — Minimum cycle detection algorithm ✅
-- Implement the minimum angle traversal algorithm to find all minimal enclosed faces.
-- For each directed edge, find the next edge by choosing the smallest counter-clockwise turn.
-- Collect all minimal cycles.
-- Identify the outer boundary (largest cycle by area) and exclude it — it is not a room.
+### 2a. Implicit single section (Req 9, bullet 1)
 
-### Step 4.3 — Wall side determination ✅
-- For each wall in a room's cycle, determine which side (left/right relative to the wall direction) faces the room interior.
-- Define `WallSide` enum: Inner, Outer.
-- Store `wall_sides` in the Room struct parallel to `wall_ids`.
+**Problem**: `SideData.sections` is empty when there are no junctions. Code uses `has_sections()` to skip rendering. Every side must always have at least one section.
 
-### Step 4.4 — Floor area calculation ✅
-- For each room, compute the inner polygon by offsetting walls inward by half-thickness on the room-facing side.
-- Apply the Shoelace formula to compute the area of the inner polygon.
-- Compute the perimeter as the sum of inner edge lengths.
+**Files**: `src/model/wall.rs`
 
-### Step 4.5 — Room rendering on canvas ✅
-- Render each detected room as a semi-transparent filled polygon with a unique color.
-- Display the room name at the polygon's centroid.
-- Use a palette of distinct colors for multiple rooms.
+- Change `SideData::new()` to initialize `sections` with one `SectionData` spanning the full side length, matching the side's height_start/height_end.
+- Change `remove_junction()`: when junctions become empty, recompute sections to a single entry (instead of clearing).
+- Change `has_sections()` → always returns true (or remove it and fix callers).
+- Update `recompute_sections()` to handle the 0-junction case (produces 1 section).
+- Ensure serde deserialization handles old data with empty `sections` (add a `fn ensure_sections()` post-deserialization fixup, or handle at load time in `project_io.rs`).
 
-### Step 4.6 — Room list panel and renaming ✅
-- Show the list of detected rooms in the left panel (or a dedicated section).
-- Default room names: "Room 1", "Room 2", etc.
-- Allow renaming rooms via an editable text field.
-- Clicking a room in the list selects it on the canvas and shows properties in the right panel.
-- Room properties: name, floor area (m²), perimeter (m).
+### 2b. Distinct per-side section coloring (Req 9, bullet 2)
 
-### Step 4.7 — Auto-detection trigger ✅
-- Hook the room detection algorithm to run whenever walls are added, removed, or modified.
-- Preserve user-assigned room names when rooms are re-detected (match by wall set).
-- Preserve assigned services when rooms persist through re-detection.
+**Problem**: Section colors are currently per-index (same palette for both sides) and only shown when selected.
 
----
+**Files**: `src/app/canvas_draw.rs`
 
-## Phase 5: Undo/Redo
+- Remove the `if is_selected` guard around section rendering (lines 104–158). Sections should always be visible.
+- Use distinct tint palettes for left side (e.g. blue-ish tints) and right side (e.g. orange-ish tints).
+- Render section fill strips as semi-transparent rectangles along each side of the wall body (between the wall outline and centerline), not just a thin colored line.
+- Keep junction tick marks visible for walls that have junctions.
 
-### Step 5.1 — Command trait and History struct ✅
-- Define the `Command` trait with `execute()`, `undo()`, and `description()` methods.
-- Implement `History` struct with `undo_stack: Vec<Box<dyn Command>>` and `redo_stack: Vec<Box<dyn Command>>`.
-- Implement `push()`, `undo()`, `redo()` methods on History.
-- On push: clear redo_stack.
+### 2c. Selection highlight via outline stroke (Req 9, bullet 3)
 
-### Step 5.2 — Wall commands ✅
-- Implement `AddWallCommand`: stores the wall data; execute adds it, undo removes it.
-- Implement `RemoveWallCommand`: stores the wall data; execute removes it, undo re-adds it.
-- Implement `ModifyWallCommand`: stores old and new wall data; execute applies new, undo restores old.
+**Problem**: Selected walls are flood-filled blue, hiding section coloring underneath.
 
-### Step 5.3 — Opening commands ✅
-- Implement `AddOpeningCommand`, `RemoveOpeningCommand`, `ModifyOpeningCommand`.
-- Handle wall references: when adding/removing an opening, also update the parent wall's openings list.
+**Files**: `src/app/canvas_draw.rs`
 
-### Step 5.4 — Integrate commands into editor tools ✅
-- Refactor wall tool to create walls via `AddWallCommand` pushed to History.
-- Refactor selection tool deletion to use `RemoveWallCommand` / `RemoveOpeningCommand`.
-- Refactor property edits to use `ModifyWallCommand` / `ModifyOpeningCommand`.
-- Refactor opening tool to use `AddOpeningCommand`.
+- Remove the blue fill override for selected walls (lines 26–29 where `fill` changes based on `is_selected`).
+- All walls use the same base fill color (the neutral gray `wall_fill`).
+- For selected walls, draw an additional outline stroke (thicker, bright color) around the entire wall polygon after the normal rendering pass.
+- Section tint colors remain visible underneath.
 
-### Step 5.5 — Keyboard shortcuts for undo/redo ✅
-- Bind Ctrl+Z to `history.undo()`.
-- Bind Ctrl+Y and Ctrl+Shift+Z to `history.redo()`.
-- Add Undo/Redo buttons to the toolbar with enabled/disabled state based on stack emptiness.
+### 2d. Section labels for all sections including implicit (Req 9, bullet 4)
+
+This is partially addressed by Req 1 (Session 3), but the foundation is: section labels must appear even when there is only one implicit section. The current `has_sections()` guard (line 115) skips label rendering for single-section walls. After 2a makes sections always present, this guard will be removed, and labels will appear for all walls.
+
+### 2e. Scrollbars for side panels (Req 5)
+
+**Problem**: Properties panel and services panel overflow without scrollbars.
+
+**Files**: `src/app/properties_panel.rs`, `src/app/services_panel.rs`
+
+- Wrap the body of `show_right_panel()` content inside `egui::ScrollArea::vertical().show(ui, |ui| { ... })`.
+- Similarly wrap the left panel (services panel) content.
+- Keep panel headings outside the scroll area if desired for sticky headers.
 
 ---
 
-## Phase 6: Price List and Services
+## Session 3: Canvas Labels and Section Length Editing (Req 1 + Req 6)
 
-### Step 6.1 — Price list data model ✅
-- Define `UnitType` enum: Piece, SquareMeter, LinearMeter.
-- Define `TargetObjectType` enum: Wall, Window, Door, Room.
-- Define `ServiceTemplate` struct: id, name, unit_type, price_per_unit, target_type.
-- Define `PriceList` struct: name, services.
-- Define `AssignedService` struct: service_template_id, custom_price (Option<f64>).
-- Derive Serialize/Deserialize for all.
+### 3a. Section dimension labels (Req 1, first part)
 
-### Step 6.2 — Price list editing panel (bottom panel, "Price List" tab) ✅
-- Render a table with columns: name, target object type, unit of measurement, price per unit.
-- Add "Add Service" button: inserts a new row with default values.
-- Add "Delete" button: removes the selected service.
-- All fields are editable inline.
+**Problem**: Each section should show `{length} - {area}` parallel to the wall centerline, centered on the section. Currently only whole-wall area is shown.
 
-### Step 6.3 — Price list save/load ✅
-- Implement `price_io.rs`: save price list to `saves/prices/{name}.json`.
-- Implement load price list from JSON.
-- Add "Import Price List" and "Export Price List" buttons to the price list panel.
-- Use `rfd` for file dialogs.
+**Files**: `src/app/canvas_draw.rs`
 
-### Step 6.4 — Service assignment to objects (bottom panel, "Assigned Services" tab) ✅
-- When an object (wall/opening/room) is selected, show its assigned services.
-- "Add Service" button: show a dropdown/popup of available services filtered by `target_type`.
-- Display for each assigned service: name, calculated quantity, price per unit, total cost.
-- Allow removing an assigned service.
+- Replace the current per-wall area labels (lines 160–202) with per-section labels.
+- For each side, iterate over sections. For each section:
+  - Compute the section's midpoint along the wall (using boundary t-values).
+  - Offset the label position to the appropriate side (left or right of centerline).
+  - Format: `{length_mm} - {area_m2} м²` (e.g. "3500 - 9.45 м²").
+  - Rotate/orient the label parallel to the wall centerline using `painter.text()` with appropriate anchoring (egui doesn't support rotated text natively — use the midpoint position and accept horizontal text, or compute angle and use `galley` with rotation transform if feasible).
+- If egui rotation is impractical, draw labels at the section midpoint with horizontal alignment but offset to the correct side.
 
-### Step 6.5 — Quantity calculation for assigned services ✅
-- Implement quantity calculation based on `unit_type`:
-  - Piece → quantity = 1.
-  - SquareMeter → wall: net area; room: floor area; window: reveal area; door: opening area.
-  - LinearMeter → wall: length; room: perimeter; window: reveal perimeter; door: perimeter.
-- Display calculated quantity and cost (quantity × price) in the services panel.
+### 3b. Wall thickness label (Req 1, second part)
 
-### Step 6.6 — Custom price override ✅
-- Allow overriding the price per unit for a specific assigned service (custom_price field).
-- If custom_price is set, use it instead of the template's price_per_unit.
-- Display a visual indicator (e.g., bold or icon) when a custom price is active.
+**Problem**: Wall thickness should be rendered at the wall center, replacing the current baseline-length label.
 
----
+**Files**: `src/app/canvas_draw.rs`
 
-## Phase 7: Excel Report
+- The current label at lines 84–102 shows wall centerline length ("3.50 м"). Replace this with the wall thickness label (e.g. "200 мм" or "0.20 м").
+- Position it at the wall body center (midpoint of centerline), parallel to the wall.
+- Wall length information is now captured per-section in the section labels (3a).
 
-### Step 7.1 — Excel export scaffold ✅
-- Set up `rust_xlsxwriter` in `export/excel.rs`.
-- Implement the function signature: `fn export_to_xlsx(project: &Project, price_list: &PriceList, path: &Path) -> Result<()>`.
-- Create a workbook with 3 sheets: "Rooms", "Doors", "Estimate".
-- Define cell formats: headers (bold), numbers (2 decimal places), currency.
+### 3c. Section length editing in properties panel (Req 6, first part)
 
-### Step 7.2 — "Rooms" sheet: summary table ✅
-- Write a summary table at the top: Room name, Floor Area (m²), Perimeter (m), Gross Wall Area (m²), Net Wall Area (m²).
-- Iterate over all rooms and fill in the data.
+**Problem**: `SectionData.length` is read-only in the properties panel. It must be individually editable via a numeric input.
 
-### Step 7.3 — "Rooms" sheet: per-room detail breakdown ✅
-- Below the summary, for each room write a detailed section.
-- Walls sub-table: wall label, start height, end height, length, thickness, gross area, net area.
-- Windows sub-table: label, height, width, reveal width, sill height, reveal perimeter, reveal area.
-- Add spacing/headers between room sections.
+**Files**: `src/app/property_edits.rs`, `src/app/properties_panel.rs`
 
-### Step 7.4 — "Doors" sheet ✅
-- Write the doors table: door label, height, width, depth, perimeter, from-room, to-room.
-- Determine "from room" and "to room" by finding which rooms share the wall the door is on.
+- In `show_side_sections()`, change each section's "Длина:" row from a label to a `DragValue` input.
+- Editing a section's length should update `section.length` directly.
+- The section area updates automatically (computed from length × heights).
+- Add undo/redo support: track section edits in the wall snapshot mechanism (already captures `SideData` which includes `sections`).
 
-### Step 7.5 — "Estimate" sheet ✅
-- Write the estimate table: Room/Object, Service name, Unit, Quantity, Price per unit, Cost.
-- Group rows by room, then by object within the room.
-- Add a TOTAL row at the bottom summing all costs.
+### 3d. Side length locking when junctions exist (Req 6, second part)
 
-### Step 7.6 — Report generation button and file dialog ✅
-- Add "Generate Report" button to the toolbar.
-- Disable the button when validation errors exist (e.g., unattached openings).
-- On click, open a save file dialog (rfd) for the user to choose the output .xlsx path.
-- Call `export_to_xlsx()` and show a success/error notification.
+**Problem**: When a side has junctions, the total side length should become read-only and computed from: sum of section lengths + thicknesses of all walls creating junctions on that side.
+
+**Files**: `src/app/properties_panel.rs`, `src/model/wall.rs`
+
+- Add a method `SideData::computed_total_length(&self, walls: &[Wall]) -> f64` that sums section lengths and junction wall thicknesses.
+- In `show_right_panel()`, when rendering the left/right side length field:
+  - If `side.junctions.is_empty()` → render an editable `DragValue` (current behavior).
+  - If junctions exist → render a read-only label showing the computed total.
+- Update `SideData` to recompute `self.length` from sections + junction thicknesses whenever sections change.
 
 ---
 
-## Phase 8: Project Management
+## Session 4: Room System — Validity, Section-Based Area, Two Area Values (Req 3 + Req 4 + Req 7)
 
-### Step 8.1 — Project list on startup ✅
-- On app launch, scan `saves/projects/` for existing project JSON files.
-- Display a project list/dialog: project name, last modified date.
-- Options: Open selected, Create New, Delete selected.
+### 4a. Room validity: require closed contours (Req 3)
 
-### Step 8.2 — Create new project ✅
-- "New Project" button/dialog: prompt for project name.
-- Create a new empty `Project` with the given name.
-- Save it to `saves/projects/{name}.json`.
-- Switch the editor to the new project.
-- Bind Ctrl+N shortcut.
+**Problem**: Rooms with open contours (from wall deletion/modification) remain in `Project.rooms`.
 
-### Step 8.3 — Open existing project ✅
-- "Open" button: show file dialog (rfd) or project list.
-- Load the selected project JSON.
-- Switch the editor to the loaded project.
-- Bind Ctrl+O shortcut.
+**Files**: `src/app/canvas.rs` (or `src/app/mod.rs`), `src/editor/room_detection.rs`
 
-### Step 8.4 — Save project ✅
-- "Save" button: save the current project to its JSON file.
-- Bind Ctrl+S shortcut.
-- Show a brief confirmation (e.g., status bar message).
+- After `merge_rooms()` in `show_canvas()`, add a validation pass: for each existing room, verify its wall list forms a closed contour:
+  - All `wall_ids` must reference existing walls.
+  - Consecutive walls in the contour must share an endpoint (within epsilon).
+  - The last wall must connect back to the first.
+- Remove rooms that fail validation from `Project.rooms` (and clean up `room_services`).
+- Alternative: `merge_rooms()` already replaces rooms each frame from `WallGraph::detect_rooms()`. Verify this is sufficient — if a wall is deleted, the room should disappear naturally from the next detection cycle. If not, add explicit cleanup.
 
-### Step 8.5 — Auto-save ✅
-- Implement auto-save on every significant action: adding/removing/modifying walls, openings, services.
-- Debounce if necessary to avoid excessive disk writes.
-- Show an auto-save indicator in the status bar.
+### 4b. Room area from section lengths (Req 4, main computation)
 
-### Step 8.6 — Delete project ✅
-- In the project list, allow deleting a project.
-- Confirm with a dialog before deleting.
-- Remove the JSON file from disk.
+**Problem**: Current area uses Shoelace formula on the offset polygon (centerline ± half-thickness). New approach: use interior section lengths from `SideData.sections` on the room-facing side.
 
----
+**Files**: `src/editor/room_metrics.rs`
 
-## Phase 9: Polish
+- For each wall segment in the room contour, take the room-facing side's sections to get the interior measurement.
+  - Sum all section lengths on the room-facing side to get the interior wall length for that segment.
+  - This accounts for junctions (wall thickness subtracted at T-junction points).
+- Build an interior polygon using these section-based lengths:
+  - Use the same offset-intersection approach as current code, but replace the offset distance with a per-segment interior length.
+  - Or: walk the contour, placing each segment at its interior length and turning by the measured interior angle.
+- Compute area of the resulting polygon via Shoelace formula.
 
-### Step 9.1 — Left panel: project structure tree
-- Implement a tree view in the left panel: Rooms → Walls → Openings.
-- Each room node expands to show its walls; each wall node expands to show its openings.
-- Clicking an item selects it on the canvas and shows its properties.
+### 4c. Corner area correction (Req 4, corner term)
 
-### Step 9.2 — Tooltips and UI hints
-- Add tooltips to toolbar buttons (tool name + shortcut key).
-- Add tooltips to panel controls explaining their function.
-- Show a brief instruction text on the canvas when a tool is active (e.g., "Click to place wall start point").
+**Files**: `src/editor/room_metrics.rs`
 
-### Step 9.3 — Keyboard shortcuts consolidation
-- Verify all keyboard shortcuts from the spec are implemented: V, W, D, O, Delete, Ctrl+Z, Ctrl+Y, Ctrl+S, Ctrl+N, Ctrl+O, Escape, Shift.
-- Add a help dialog or shortcut reference (accessible via F1 or Help menu).
+- At each interior corner, approximate the angle between consecutive walls.
+- Add or subtract a corner correction term based on the angle and wall thicknesses:
+  - For a right angle (90°): the correction is typically `thickness₁ × thickness₂ / 4` (quarter of the overlap rectangle).
+  - For other angles: use the appropriate geometric formula.
+- This accounts for the overlap or gap at corners.
 
-### Step 9.4 — Performance optimization
-- Profile rendering performance on large projects (many walls, rooms).
-- Optimize canvas rendering: cull off-screen elements, cache computed geometry.
-- Optimize room detection: avoid recomputation when unrelated changes occur.
-- Test on low-end hardware and ensure smooth 60 FPS.
+### 4d. Column-wall exception (Req 4, column case)
 
-### Step 9.5 — Edge case handling
-- Handle overlapping walls gracefully.
-- Handle walls with zero length (prevent creation).
-- Handle opening wider than wall length (prevent or clamp).
-- Handle degenerate rooms (self-intersecting contours).
-- Handle empty project (no walls) — disable report button, show helpful message.
+**Files**: `src/editor/room_metrics.rs`
 
-### Step 9.6 — Russian language interface
-- Ensure all UI text (labels, buttons, tooltips, dialogs) is in Russian.
-- Verify correct encoding (UTF-8) in all user-facing strings.
-- Verify Russian text renders correctly in egui (font support).
+- Detect when both sides of a wall face the same room interior (wall acts as a column/partition within the room).
+- For such walls, subtract the column's cross-section area (`length × thickness`) from the room area.
+
+### 4e. Room properties: two area values (Req 7)
+
+**Problem**: Properties panel shows one area value. Must show gross area and net area.
+
+**Files**: `src/app/properties_panel.rs`, `src/editor/room_metrics.rs`
+
+- Extend `RoomMetrics` to include both `gross_area` (full bounding polygon including wall volume and window reveals) and `net_area` (clear interior floor area from section-length-based polygon).
+- `gross_area`: area of the polygon formed by wall centerlines (no inward offset) — or the outer edges.
+- `net_area`: area from the section-length-based interior polygon (from 4b).
+- In `show_right_panel()` for `Selection::Room`, display both values:
+  ```
+  Площадь (брутто): X.XX м²
+  Площадь (нетто):  Y.YY м²
+  ```
+- Update the canvas room label (`draw_rooms()`) to show net area (or both).

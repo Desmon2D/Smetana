@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::editor::{EditorTool, Selection, WallToolState};
+use crate::editor::{EditorTool, Selection, SnapType, WallToolState};
 use crate::editor::wall_joints::compute_joints;
 use crate::model::{OpeningKind, Point2D};
 use super::App;
@@ -21,18 +21,26 @@ impl App {
 
         let (joint_map, hub_polygons) = compute_joints(&self.project.walls, &self.editor.canvas, center);
 
+        // Distinct section color palettes per side
+        const LEFT_SECTION_COLORS: &[(u8, u8, u8)] = &[
+            (80, 140, 210),
+            (100, 170, 230),
+            (60, 120, 190),
+            (90, 155, 220),
+            (70, 130, 200),
+            (110, 180, 240),
+        ];
+        const RIGHT_SECTION_COLORS: &[(u8, u8, u8)] = &[
+            (210, 140, 80),
+            (230, 160, 100),
+            (190, 120, 60),
+            (220, 150, 90),
+            (200, 130, 70),
+            (240, 170, 110),
+        ];
+
         for wall in &self.project.walls {
             let is_selected = selected_id == Some(wall.id);
-            let fill = if is_selected {
-                egui::Color32::from_rgb(100, 160, 220)
-            } else {
-                wall_fill
-            };
-            let outline = if is_selected {
-                egui::Color32::from_rgb(60, 120, 200)
-            } else {
-                wall_outline
-            };
 
             let start_screen = self.editor.canvas.world_to_screen(
                 egui::pos2(wall.start.x as f32, wall.start.y as f32),
@@ -70,136 +78,135 @@ impl App {
 
             let corners = [start_left, end_left, end_right, start_right];
 
-            let outline_width = if is_selected { 2.0 } else { 1.0 };
+            // All walls use the same neutral fill
             painter.add(egui::Shape::convex_polygon(
                 corners.to_vec(),
-                fill,
-                egui::Stroke::new(outline_width, outline),
+                wall_fill,
+                egui::Stroke::new(1.0, wall_outline),
             ));
 
-            let ep_radius = if is_selected { 4.0 } else { 3.0 };
-            painter.circle_filled(start_screen, ep_radius, start_color);
-            painter.circle_filled(end_screen, ep_radius, end_color);
+            // Section fill strips (always visible)
+            for (side_data, sign, palette) in [
+                (&wall.left_side, 1.0_f32, LEFT_SECTION_COLORS),
+                (&wall.right_side, -1.0_f32, RIGHT_SECTION_COLORS),
+            ] {
+                let mut boundaries = vec![0.0_f32];
+                for j in &side_data.junctions {
+                    boundaries.push(j.t as f32);
+                }
+                boundaries.push(1.0);
 
-            let length_mm = wall.length();
-            if length_mm > 1.0 {
+                for i in 0..boundaries.len() - 1 {
+                    let t0 = boundaries[i];
+                    let t1 = boundaries[i + 1];
+                    let color_idx = i % palette.len();
+                    let (cr, cg, cb) = palette[color_idx];
+                    let section_color = egui::Color32::from_rgba_premultiplied(cr, cg, cb, 50);
+
+                    // Quad from centerline to side edge
+                    let p0_center = egui::pos2(
+                        start_screen.x + dx * t0,
+                        start_screen.y + dy * t0,
+                    );
+                    let p1_center = egui::pos2(
+                        start_screen.x + dx * t1,
+                        start_screen.y + dy * t1,
+                    );
+                    let p0_edge = egui::pos2(
+                        p0_center.x + nx * sign,
+                        p0_center.y + ny * sign,
+                    );
+                    let p1_edge = egui::pos2(
+                        p1_center.x + nx * sign,
+                        p1_center.y + ny * sign,
+                    );
+
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![p0_center, p1_center, p1_edge, p0_edge],
+                        section_color,
+                        egui::Stroke::NONE,
+                    ));
+                }
+
+                // Junction tick marks
+                for j in &side_data.junctions {
+                    let jt = j.t as f32;
+                    let jx = start_screen.x + dx * jt;
+                    let jy = start_screen.y + dy * jt;
+                    let j_center = egui::pos2(jx, jy);
+                    let j_edge = egui::pos2(jx + nx * sign, jy + ny * sign);
+                    painter.line_segment(
+                        [j_center, j_edge],
+                        egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 200, 60)),
+                    );
+                }
+            }
+
+            // Selection highlight: thicker bright outline on top
+            if is_selected {
+                let sel_outline = egui::Color32::from_rgb(60, 160, 255);
+                painter.add(egui::Shape::closed_line(
+                    corners.to_vec(),
+                    egui::Stroke::new(2.5, sel_outline),
+                ));
+                painter.circle_filled(start_screen, 4.0, start_color);
+                painter.circle_filled(end_screen, 4.0, end_color);
+            }
+
+            // Wall thickness label at center
+            let thickness_mm = wall.thickness;
+            if len > 20.0 {
                 let mid = egui::pos2(
-                    (start_screen.x + end_screen.x) / 2.0 + nx * 0.6,
-                    (start_screen.y + end_screen.y) / 2.0 + ny * 0.6,
+                    (start_screen.x + end_screen.x) / 2.0,
+                    (start_screen.y + end_screen.y) / 2.0,
                 );
-                let label = if length_mm >= 1000.0 {
-                    format!("{:.2} м", length_mm / 1000.0)
-                } else {
-                    format!("{:.0} мм", length_mm)
-                };
+                let label = format!("{:.0}", thickness_mm);
                 painter.text(
                     mid,
                     egui::Align2::CENTER_CENTER,
                     label,
-                    egui::FontId::proportional(11.0),
+                    egui::FontId::proportional(10.0),
                     dim_color,
                 );
             }
 
-            if is_selected {
-                const SECTION_COLORS: &[(u8, u8, u8)] = &[
-                    (100, 180, 240),
-                    (240, 160, 100),
-                    (100, 220, 140),
-                    (220, 120, 220),
-                    (240, 220, 100),
-                    (120, 220, 220),
-                ];
+            // Per-section dimension labels on each side
+            let left_label_color = egui::Color32::from_rgb(100, 160, 220);
+            let right_label_color = egui::Color32::from_rgb(170, 100, 200);
 
-                for (side_data, sign) in [(&wall.left_side, 1.0_f32), (&wall.right_side, -1.0_f32)] {
-                    if !side_data.has_sections() {
-                        continue;
+            for (side_data, sign, label_color) in [
+                (&wall.left_side, 1.0_f32, left_label_color),
+                (&wall.right_side, -1.0_f32, right_label_color),
+            ] {
+                let mut boundaries = vec![0.0_f32];
+                for j in &side_data.junctions {
+                    boundaries.push(j.t as f32);
+                }
+                boundaries.push(1.0);
+
+                for (i, section) in side_data.sections.iter().enumerate() {
+                    if i >= boundaries.len() - 1 {
+                        break;
                     }
+                    let t0 = boundaries[i];
+                    let t1 = boundaries[i + 1];
+                    let t_mid = (t0 + t1) / 2.0;
 
-                    for j in &side_data.junctions {
-                        let jt = j.t as f32;
-                        let jx = start_screen.x + dx * jt;
-                        let jy = start_screen.y + dy * jt;
-                        let j_center = egui::pos2(jx, jy);
-                        let j_edge = egui::pos2(jx + nx * sign, jy + ny * sign);
-                        painter.line_segment(
-                            [j_center, j_edge],
-                            egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 200, 60)),
-                        );
-                    }
+                    let mid_x = start_screen.x + dx * t_mid + nx * sign * 1.6;
+                    let mid_y = start_screen.y + dy * t_mid + ny * sign * 1.6;
 
-                    let mut boundaries = vec![0.0_f32];
-                    for j in &side_data.junctions {
-                        boundaries.push(j.t as f32);
-                    }
-                    boundaries.push(1.0);
-
-                    for i in 0..boundaries.len() - 1 {
-                        let t0 = boundaries[i];
-                        let t1 = boundaries[i + 1];
-                        let color_idx = i % SECTION_COLORS.len();
-                        let (cr, cg, cb) = SECTION_COLORS[color_idx];
-                        let section_color = egui::Color32::from_rgba_premultiplied(cr, cg, cb, 120);
-
-                        let p0 = egui::pos2(
-                            start_screen.x + dx * t0 + nx * sign * 0.8,
-                            start_screen.y + dy * t0 + ny * sign * 0.8,
-                        );
-                        let p1 = egui::pos2(
-                            start_screen.x + dx * t1 + nx * sign * 0.8,
-                            start_screen.y + dy * t1 + ny * sign * 0.8,
-                        );
-                        painter.line_segment(
-                            [p0, p1],
-                            egui::Stroke::new(3.0, section_color),
-                        );
-                    }
+                    let length_mm = section.length;
+                    let area_m2 = section.gross_area() / 1_000_000.0;
+                    let label = format!("{:.0} - {:.2} м²", length_mm, area_m2);
+                    painter.text(
+                        egui::pos2(mid_x, mid_y),
+                        egui::Align2::CENTER_CENTER,
+                        label,
+                        egui::FontId::proportional(9.0),
+                        label_color,
+                    );
                 }
             }
-
-            let left_color = egui::Color32::from_rgb(100, 160, 220);
-            let right_color = egui::Color32::from_rgb(170, 100, 200);
-
-            let openings_area = crate::model::opening_area_mm2(wall, &self.project.openings);
-
-            let left_gross = wall.left_side.gross_area() / 1_000_000.0;
-            let left_net = (wall.left_side.gross_area() - openings_area) / 1_000_000.0;
-            let right_gross = wall.right_side.gross_area() / 1_000_000.0;
-            let right_net = (wall.right_side.gross_area() - openings_area) / 1_000_000.0;
-
-            let left_pos = egui::pos2(
-                (start_screen.x + end_screen.x) / 2.0 + nx * 1.8,
-                (start_screen.y + end_screen.y) / 2.0 + ny * 1.8,
-            );
-            let left_label = if openings_area > 0.0 {
-                format!("{:.2} м² ({:.2})", left_gross, left_net)
-            } else {
-                format!("{:.2} м²", left_gross)
-            };
-            painter.text(
-                left_pos,
-                egui::Align2::CENTER_CENTER,
-                left_label,
-                egui::FontId::proportional(10.0),
-                left_color,
-            );
-
-            let right_pos = egui::pos2(
-                (start_screen.x + end_screen.x) / 2.0 - nx * 1.8,
-                (start_screen.y + end_screen.y) / 2.0 - ny * 1.8,
-            );
-            let right_label = if openings_area > 0.0 {
-                format!("{:.2} м² ({:.2})", right_gross, right_net)
-            } else {
-                format!("{:.2} м²", right_gross)
-            };
-            painter.text(
-                right_pos,
-                egui::Align2::CENTER_CENTER,
-                right_label,
-                egui::FontId::proportional(10.0),
-                right_color,
-            );
         }
 
         for hub in &hub_polygons {
@@ -276,11 +283,24 @@ impl App {
                 egui::pos2(end.x as f32, end.y as f32),
                 center,
             );
-            painter.circle_stroke(
-                end_screen,
-                4.0,
-                egui::Stroke::new(1.5, start_marker_color),
-            );
+
+            // Snap indicator: colored ring based on snap type
+            let (indicator_color, radius) = match &self.editor.wall_tool.last_snap {
+                Some(snap) => match &snap.snap_type {
+                    SnapType::Vertex => (egui::Color32::from_rgb(60, 200, 80), 6.0),
+                    SnapType::WallEdge { .. } => (egui::Color32::from_rgb(230, 210, 50), 6.0),
+                    SnapType::Grid => (egui::Color32::from_rgb(180, 180, 180), 4.0),
+                    SnapType::None => (egui::Color32::TRANSPARENT, 0.0),
+                },
+                None => (egui::Color32::TRANSPARENT, 0.0),
+            };
+            if indicator_color != egui::Color32::TRANSPARENT {
+                painter.circle_stroke(
+                    end_screen,
+                    radius,
+                    egui::Stroke::new(2.0, indicator_color),
+                );
+            }
         }
     }
 
@@ -517,7 +537,7 @@ impl App {
                 label_color,
             );
 
-            let area_m2 = metrics.area / 1_000_000.0;
+            let area_m2 = metrics.net_area / 1_000_000.0;
             painter.text(
                 egui::pos2(cx, cy + 16.0),
                 egui::Align2::CENTER_CENTER,

@@ -83,23 +83,23 @@ pub struct SideData {
 
 impl SideData {
     pub fn new(length: f64, height_start: f64, height_end: f64) -> Self {
+        let sections = vec![SectionData {
+            length,
+            height_start,
+            height_end,
+        }];
         Self {
             length,
             height_start,
             height_end,
             junctions: Vec::new(),
-            sections: Vec::new(),
+            sections,
         }
     }
 
     /// Gross area in mm² (trapezoid formula)
     pub fn gross_area(&self) -> f64 {
         self.length * (self.height_start + self.height_end) / 2.0
-    }
-
-    /// Returns true if this side has T-junctions (and thus sections).
-    pub fn has_sections(&self) -> bool {
-        !self.junctions.is_empty()
     }
 
     /// Number of sections (1 if no junctions, N+1 if N junctions).
@@ -118,15 +118,30 @@ impl SideData {
     /// Remove a junction by connecting wall ID and recompute sections.
     pub fn remove_junction(&mut self, wall_id: Uuid) {
         self.junctions.retain(|j| j.wall_id != wall_id);
-        if self.junctions.is_empty() {
-            self.sections.clear();
-        } else {
+        self.recompute_sections();
+    }
+
+    /// Ensure sections are populated (post-deserialization fixup for old data).
+    pub fn ensure_sections(&mut self) {
+        if self.sections.is_empty() {
             self.recompute_sections();
         }
     }
 
+    /// Total length from section lengths + junction wall thicknesses.
+    pub fn computed_total_length(&self, walls: &[Wall]) -> f64 {
+        let sections_sum: f64 = self.sections.iter().map(|s| s.length).sum();
+        let junctions_sum: f64 = self
+            .junctions
+            .iter()
+            .filter_map(|j| walls.iter().find(|w| w.id == j.wall_id))
+            .map(|w| w.thickness)
+            .sum();
+        sections_sum + junctions_sum
+    }
+
     /// Recompute section data from junctions.
-    fn recompute_sections(&mut self) {
+    pub fn recompute_sections(&mut self) {
         let n = self.junctions.len();
         // Boundary t values: [0.0, t1, t2, ..., 1.0]
         let mut boundaries = Vec::with_capacity(n + 2);

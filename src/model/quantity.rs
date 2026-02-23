@@ -83,7 +83,7 @@ pub fn room_quantity(unit: UnitType, room: &Room, walls: &[Wall]) -> f64 {
     match unit {
         UnitType::Piece => 1.0,
         UnitType::SquareMeter => {
-            compute_room_metrics(room, walls).map_or(0.0, |m| m.area / 1_000_000.0)
+            compute_room_metrics(room, walls).map_or(0.0, |m| m.net_area / 1_000_000.0)
         }
         UnitType::LinearMeter => {
             compute_room_metrics(room, walls).map_or(0.0, |m| m.perimeter / 1000.0)

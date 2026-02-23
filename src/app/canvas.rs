@@ -68,6 +68,8 @@ impl App {
                         match self.editor.wall_tool.state.clone() {
                             WallToolState::Idle => {
                                 self.editor.wall_tool.chain_start = Some(snapped);
+                                self.editor.wall_tool.start_snap =
+                                    self.editor.wall_tool.last_snap.clone();
                                 self.editor.wall_tool.state =
                                     WallToolState::Drawing { start: snapped };
                             }
@@ -110,6 +112,10 @@ impl App {
                                         Box::new(AddWallCommand { wall, junction_target }),
                                         &mut self.project,
                                     );
+                                    // Save current snap as the start_snap for the next
+                                    // chained wall (so it won't produce a junction).
+                                    self.editor.wall_tool.start_snap =
+                                        self.editor.wall_tool.last_snap.clone();
                                     self.editor.wall_tool.chain_from(snapped);
                                 }
                             }

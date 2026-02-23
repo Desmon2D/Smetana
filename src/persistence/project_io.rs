@@ -40,7 +40,15 @@ pub fn save_project(project: &Project) -> Result<PathBuf, String> {
 /// Load a project from a JSON file.
 pub fn load_project(path: &Path) -> Result<Project, String> {
     let json = fs::read_to_string(path).map_err(|e| format!("Ошибка чтения файла: {e}"))?;
-    serde_json::from_str(&json).map_err(|e| format!("Ошибка десериализации: {e}"))
+    let mut project: Project =
+        serde_json::from_str(&json).map_err(|e| format!("Ошибка десериализации: {e}"))?;
+    // Post-deserialization fixup: ensure all wall sides have sections
+    // (old saves may have empty sections vec).
+    for wall in &mut project.walls {
+        wall.left_side.ensure_sections();
+        wall.right_side.ensure_sections();
+    }
+    Ok(project)
 }
 
 /// List all project JSON files in the saves directory.
