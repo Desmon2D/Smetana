@@ -5,6 +5,45 @@ use crate::editor::wall_joints::compute_joints;
 use crate::model::{OpeningKind, Point2D};
 use super::App;
 
+/// Draw text centered at `center_pos`, rotated to follow the wall angle.
+/// The angle is automatically flipped so text is never upside-down.
+fn paint_rotated_text(
+    painter: &egui::Painter,
+    center_pos: egui::Pos2,
+    text: String,
+    font_id: egui::FontId,
+    color: egui::Color32,
+    wall_angle: f32,
+) {
+    // Normalize angle so text is never upside-down
+    let angle = if wall_angle > std::f32::consts::FRAC_PI_2 {
+        wall_angle - std::f32::consts::PI
+    } else if wall_angle < -std::f32::consts::FRAC_PI_2 {
+        wall_angle + std::f32::consts::PI
+    } else {
+        wall_angle
+    };
+
+    let galley = painter.layout_no_wrap(text, font_id, color);
+    let w = galley.size().x;
+    let h = galley.size().y;
+
+    // TextShape rotates clockwise around `pos` (the upper-left corner).
+    // egui's Rot2 applies: x' = c*x - s*y, y' = s*x + c*y
+    // The local center at (w/2, h/2) after rotation lands at:
+    //   offset_x = cos(θ)*w/2 - sin(θ)*h/2
+    //   offset_y = sin(θ)*w/2 + cos(θ)*h/2
+    // Set pos so that galley_pos + offset = center_pos.
+    let (sin_a, cos_a) = angle.sin_cos();
+    let offset_x = cos_a * (w / 2.0) - sin_a * (h / 2.0);
+    let offset_y = sin_a * (w / 2.0) + cos_a * (h / 2.0);
+    let pos = egui::pos2(center_pos.x - offset_x, center_pos.y - offset_y);
+
+    let text_shape = egui::epaint::TextShape::new(pos, galley, color)
+        .with_angle(angle);
+    painter.add(text_shape);
+}
+
 impl App {
     pub(super) fn draw_walls(&self, painter: &egui::Painter, rect: egui::Rect) {
         let center = rect.center();
@@ -12,7 +51,7 @@ impl App {
         let wall_outline = egui::Color32::from_rgb(40, 40, 42);
         let start_color = egui::Color32::from_rgb(60, 200, 80);
         let end_color = egui::Color32::from_rgb(230, 210, 50);
-        let dim_color = egui::Color32::from_rgb(220, 220, 230);
+
 
         let selected_id = match self.editor.selection {
             Selection::Wall(id) => Some(id),
@@ -153,6 +192,9 @@ impl App {
                 painter.circle_filled(end_screen, 4.0, end_color);
             }
 
+            // Wall direction angle for rotated labels
+            let wall_angle = dy.atan2(dx);
+
             // Wall thickness label at center
             let thickness_mm = wall.thickness;
             if len > 20.0 {
@@ -161,12 +203,13 @@ impl App {
                     (start_screen.y + end_screen.y) / 2.0,
                 );
                 let label = format!("{:.0}", thickness_mm);
-                painter.text(
+                paint_rotated_text(
+                    painter,
                     mid,
-                    egui::Align2::CENTER_CENTER,
                     label,
                     egui::FontId::proportional(10.0),
-                    dim_color,
+                    egui::Color32::BLACK,
+                    wall_angle,
                 );
             }
 
@@ -198,12 +241,13 @@ impl App {
                     let length_mm = section.length;
                     let area_m2 = section.gross_area() / 1_000_000.0;
                     let label = format!("{:.0} - {:.2} м²", length_mm, area_m2);
-                    painter.text(
+                    paint_rotated_text(
+                        painter,
                         egui::pos2(mid_x, mid_y),
-                        egui::Align2::CENTER_CENTER,
                         label,
                         egui::FontId::proportional(9.0),
                         label_color,
+                        wall_angle,
                     );
                 }
             }
@@ -258,21 +302,30 @@ impl App {
 
                 let length_mm = start.distance_to(end);
                 if length_mm > 1.0 {
+                    let pdx = end_screen.x - start_screen.x;
+                    let pdy = end_screen.y - start_screen.y;
+                    let preview_angle = pdy.atan2(pdx);
+
+                    // Offset label perpendicular to the wall (above the line)
+                    let plen = (pdx * pdx + pdy * pdy).sqrt().max(0.001);
+                    let perp_x = -pdy / plen * 12.0;
+                    let perp_y = pdx / plen * 12.0;
                     let mid = egui::pos2(
-                        (start_screen.x + end_screen.x) / 2.0,
-                        (start_screen.y + end_screen.y) / 2.0 - 12.0,
+                        (start_screen.x + end_screen.x) / 2.0 + perp_x,
+                        (start_screen.y + end_screen.y) / 2.0 + perp_y,
                     );
                     let label = if length_mm >= 1000.0 {
                         format!("{:.2} м", length_mm / 1000.0)
                     } else {
                         format!("{:.0} мм", length_mm)
                     };
-                    painter.text(
+                    paint_rotated_text(
+                        painter,
                         mid,
-                        egui::Align2::CENTER_BOTTOM,
                         label,
                         egui::FontId::proportional(12.0),
                         preview_color,
+                        preview_angle,
                     );
                 }
             }
