@@ -106,7 +106,7 @@ impl App {
         wall_id: uuid::Uuid,
         side: WallSide,
         side_label: &str,
-        side_color: egui::Color32,
+        color_offset: usize,
     ) {
         const SECTION_COLORS: &[(u8, u8, u8)] = &[
             (100, 180, 240),
@@ -117,10 +117,7 @@ impl App {
             (120, 220, 220),
         ];
 
-        ui.horizontal(|ui| {
-            ui.colored_label(side_color, "■");
-            ui.label(side_label);
-        });
+        ui.label(side_label);
 
         let section_count = self.project.walls.iter()
             .find(|w| w.id == wall_id)
@@ -133,16 +130,15 @@ impl App {
             })
             .unwrap_or(1);
 
-        let has_sections = section_count > 1;
-
         for sec_idx in 0..section_count {
-            if has_sections {
-                let color_idx = sec_idx % SECTION_COLORS.len();
+            {
+                let global_idx = color_offset + sec_idx;
+                let color_idx = global_idx % SECTION_COLORS.len();
                 let (cr, cg, cb) = SECTION_COLORS[color_idx];
                 let color = egui::Color32::from_rgb(cr, cg, cb);
                 ui.horizontal(|ui| {
                     ui.colored_label(color, "●");
-                    ui.label(format!("Секция {}", sec_idx + 1));
+                    ui.label(format!("Секция {}", global_idx + 1));
                 });
             }
 

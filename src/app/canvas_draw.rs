@@ -142,21 +142,24 @@ impl App {
 
             let corners = [start_left, end_left, end_right, start_right];
 
+            // Compute left side section count for global color offset
+            let left_section_count = wall.left_side.junctions.len() + 1;
+
             // Section fill quads — each section is an opaque half-width polygon
-            for (side_data, sign) in [
+            for (side_idx, (side_data, sign)) in [
                 (&wall.left_side, 1.0_f32),
                 (&wall.right_side, -1.0_f32),
-            ] {
+            ].iter().enumerate() {
                 let mut boundaries = vec![0.0_f32];
                 for j in &side_data.junctions {
                     boundaries.push(j.t as f32);
                 }
                 boundaries.push(1.0);
 
-                let has_multiple = boundaries.len() > 2;
+                let color_offset = if side_idx == 0 { 0 } else { left_section_count };
 
                 // Mitered outer corners for this side
-                let (side_start, side_end) = if sign > 0.0 {
+                let (side_start, side_end) = if *sign > 0.0 {
                     (start_left, end_left)
                 } else {
                     (start_right, end_right)
@@ -166,8 +169,9 @@ impl App {
                     let t0 = boundaries[i];
                     let t1 = boundaries[i + 1];
 
-                    let section_color = if has_multiple {
-                        let color_idx = i % SECTION_COLORS.len();
+                    let section_color = if is_selected {
+                        let global_idx = color_offset + i;
+                        let color_idx = global_idx % SECTION_COLORS.len();
                         blend_color(SECTION_COLORS[color_idx], 0.35)
                     } else {
                         wall_fill
@@ -187,32 +191,40 @@ impl App {
                     let p0_edge = if t0 == 0.0 {
                         side_start
                     } else {
-                        egui::pos2(p0_center.x + nx * sign, p0_center.y + ny * sign)
+                        egui::pos2(p0_center.x + nx * *sign, p0_center.y + ny * *sign)
                     };
                     let p1_edge = if t1 == 1.0 {
                         side_end
                     } else {
-                        egui::pos2(p1_center.x + nx * sign, p1_center.y + ny * sign)
+                        egui::pos2(p1_center.x + nx * *sign, p1_center.y + ny * *sign)
                     };
 
+                    // Ensure consistent CW winding for both sides
+                    let quad = if *sign > 0.0 {
+                        vec![p0_center, p1_center, p1_edge, p0_edge]
+                    } else {
+                        vec![p0_center, p0_edge, p1_edge, p1_center]
+                    };
                     painter.add(egui::Shape::convex_polygon(
-                        vec![p0_center, p1_center, p1_edge, p0_edge],
+                        quad,
                         section_color,
                         egui::Stroke::NONE,
                     ));
                 }
 
-                // Junction tick marks
-                for j in &side_data.junctions {
-                    let jt = j.t as f32;
-                    let jx = start_screen.x + dx * jt;
-                    let jy = start_screen.y + dy * jt;
-                    let j_center = egui::pos2(jx, jy);
-                    let j_edge = egui::pos2(jx + nx * sign, jy + ny * sign);
-                    painter.line_segment(
-                        [j_center, j_edge],
-                        egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 200, 60)),
-                    );
+                // Junction tick marks — only when selected
+                if is_selected {
+                    for j in &side_data.junctions {
+                        let jt = j.t as f32;
+                        let jx = start_screen.x + dx * jt;
+                        let jy = start_screen.y + dy * jt;
+                        let j_center = egui::pos2(jx, jy);
+                        let j_edge = egui::pos2(jx + nx * *sign, jy + ny * *sign);
+                        painter.line_segment(
+                            [j_center, j_edge],
+                            egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 200, 60)),
+                        );
+                    }
                 }
             }
 
@@ -235,21 +247,19 @@ impl App {
                 thickness_mm: wall.thickness,
             });
 
-            // Collect section labels
-            let left_label_color = egui::Color32::from_rgb(100, 160, 220);
-            let right_label_color = egui::Color32::from_rgb(170, 100, 200);
-
-            for (side_data, sign, side_label_color) in [
-                (&wall.left_side, 1.0_f32, left_label_color),
-                (&wall.right_side, -1.0_f32, right_label_color),
-            ] {
+            // Collect section labels (always shown; colored when selected)
+            let unselected_label_color = egui::Color32::from_rgb(160, 160, 165);
+            for (side_idx, (side_data, sign)) in [
+                (&wall.left_side, 1.0_f32),
+                (&wall.right_side, -1.0_f32),
+            ].iter().enumerate() {
                 let mut boundaries = vec![0.0_f32];
                 for j in &side_data.junctions {
                     boundaries.push(j.t as f32);
                 }
                 boundaries.push(1.0);
 
-                let has_multiple = boundaries.len() > 2;
+                let color_offset = if side_idx == 0 { 0 } else { left_section_count };
 
                 for (i, section) in side_data.sections.iter().enumerate() {
                     if i >= boundaries.len() - 1 {
@@ -262,12 +272,13 @@ impl App {
                     let mid_x = start_screen.x + dx * t_mid + nx * sign * 1.6;
                     let mid_y = start_screen.y + dy * t_mid + ny * sign * 1.6;
 
-                    let label_color = if has_multiple {
-                        let color_idx = i % SECTION_COLORS.len();
+                    let label_color = if is_selected {
+                        let global_idx = color_offset + i;
+                        let color_idx = global_idx % SECTION_COLORS.len();
                         let (cr, cg, cb) = SECTION_COLORS[color_idx];
                         egui::Color32::from_rgb(cr, cg, cb)
                     } else {
-                        side_label_color
+                        unselected_label_color
                     };
 
                     let length_mm = section.length;

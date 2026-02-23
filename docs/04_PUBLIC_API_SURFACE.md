@@ -217,7 +217,7 @@
 | `property_edits.rs` | `has_validation_errors(&self) -> bool` | Check for detached or out-of-bounds openings |
 | `property_edits.rs` | `opening_errors(&self, opening) -> Vec<&str>` | List validation errors for an opening |
 | `property_edits.rs` | `selection_target_type(&self) -> Option<TargetObjectType>` | Map current selection to target type |
-| `property_edits.rs` | `show_side_sections(ui, side_data, side_id)` | Show per-section property editors (static method) |
+| `property_edits.rs` | `show_side_sections(ui, side_data, side_id, section_net_areas, color_offset)` | Show per-section property editors (static method) |
 | `price_list.rs` | `show_price_list_window_ui(&mut self, ctx)` | Floating window: add/edit/delete services, import/export |
 | `service_picker.rs` | `show_service_picker_window(&mut self, ctx)` | Dialog for picking service to assign |
 | `services_panel.rs` | `compute_wall_side_quantity(&self, unit, wall, side) -> f64` | Delegate to `model::wall_side_quantity` |
@@ -226,5 +226,5 @@
 | `services_panel.rs` | `compute_room_quantity(&self, unit, room) -> f64` | Delegate to `model::room_quantity` |
 | `services_panel.rs` | `build_assigned_rows_for(&self, assigned, qty_fn) -> Vec<AssignedServiceRow>` | Build display rows for assigned services |
 | `services_panel.rs` | `show_services_list(ui, grid_id, rows, prices) -> (Option<usize>, Option<usize>)` | Render service list, return (reset_idx, remove_idx) |
-| `services_panel.rs` | `show_wall_side_services(&mut self, ui, wall_id, side, label, color)` | Show services for wall side with per-section breakdown |
+| `services_panel.rs` | `show_wall_side_services(&mut self, ui, wall_id, side, label, color_offset)` | Show services for wall side with per-section breakdown |
 | `services_panel.rs` | `show_flat_services(&mut self, ui, obj_id, target, target_type, rows, services_map)` | Show services for opening/room |

@@ -52,6 +52,8 @@ impl App {
                     }
                     old.sections.iter().zip(new.sections.iter()).any(|(a, b)| {
                         (a.length - b.length).abs() > 0.01
+                            || (a.height_start - b.height_start).abs() > 0.01
+                            || (a.height_end - b.height_end).abs() > 0.01
                     })
                 };
                 let changed = (wall.thickness - old_props.thickness).abs() > 0.01
@@ -147,13 +149,7 @@ impl App {
         }
     }
 
-    pub(super) fn show_side_sections(ui: &mut egui::Ui, side_data: &mut SideData, side_id: &str) {
-        // Skip section details when there's only one implicit section
-        // (the side-level fields already show the same data).
-        if side_data.sections.len() <= 1 {
-            return;
-        }
-
+    pub(super) fn show_side_sections(ui: &mut egui::Ui, side_data: &mut SideData, side_id: &str, section_net_areas: &[f64], color_offset: usize) {
         const SECTION_COLORS: &[(u8, u8, u8)] = &[
             (100, 180, 240),
             (240, 160, 100),
@@ -164,38 +160,62 @@ impl App {
         ];
 
         ui.add_space(4.0);
+        let mut changed = false;
         for i in 0..side_data.sections.len() {
-            let color_idx = i % SECTION_COLORS.len();
+            let global_idx = color_offset + i;
+            let color_idx = global_idx % SECTION_COLORS.len();
             let (cr, cg, cb) = SECTION_COLORS[color_idx];
             let color = egui::Color32::from_rgb(cr, cg, cb);
 
             ui.horizontal(|ui| {
                 ui.colored_label(color, "●");
-                ui.label(format!("Секция {}", i + 1));
+                ui.label(format!("Секция {}", global_idx + 1));
             });
             ui.indent(format!("{side_id}_section_{i}"), |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Длина (мм):");
-                    ui.add(
+                    if ui.add(
                         egui::DragValue::new(&mut side_data.sections[i].length)
                             .range(1.0..=100000.0)
                             .speed(10.0),
-                    );
+                    ).changed() {
+                        changed = true;
+                    }
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Выс. начала:");
-                    ui.label(format!("{:.0} мм", side_data.sections[i].height_start));
+                    ui.label("Выс. начала (мм):");
+                    if ui.add(
+                        egui::DragValue::new(&mut side_data.sections[i].height_start)
+                            .range(100.0..=10000.0)
+                            .speed(10.0),
+                    ).changed() {
+                        changed = true;
+                    }
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Выс. конца:");
-                    ui.label(format!("{:.0} мм", side_data.sections[i].height_end));
+                    ui.label("Выс. конца (мм):");
+                    if ui.add(
+                        egui::DragValue::new(&mut side_data.sections[i].height_end)
+                            .range(100.0..=10000.0)
+                            .speed(10.0),
+                    ).changed() {
+                        changed = true;
+                    }
                 });
-                let area_m2 = side_data.sections[i].gross_area() / 1_000_000.0;
+                let gross_m2 = side_data.sections[i].gross_area() / 1_000_000.0;
                 ui.horizontal(|ui| {
-                    ui.label("Площадь:");
-                    ui.label(format!("{:.2} м²", area_m2));
+                    ui.label("Площадь (брутто):");
+                    ui.label(format!("{:.2} м²", gross_m2));
+                });
+                let net_m2 = section_net_areas.get(i).copied().unwrap_or(0.0) / 1_000_000.0;
+                ui.horizontal(|ui| {
+                    ui.label("Площадь (нетто):");
+                    ui.label(format!("{:.2} м²", net_m2));
                 });
             });
+        }
+        if changed {
+            side_data.sync_from_sections();
         }
     }
 }

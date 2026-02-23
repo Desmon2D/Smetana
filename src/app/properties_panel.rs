@@ -3,7 +3,7 @@ use eframe::egui;
 use crate::editor::Selection;
 use crate::editor::room_metrics::compute_room_metrics;
 use crate::history::WallProps;
-use crate::model::{OpeningKind, TargetObjectType, WallSide};
+use crate::model::{OpeningKind, TargetObjectType, WallSide, section_net_area};
 use super::{App, ServiceTarget};
 
 impl App {
@@ -30,17 +30,61 @@ impl App {
                             }
                         }
 
-                        // Pre-compute junction info before mutable borrow
-                        let (left_has_junctions, left_total, right_has_junctions, right_total) =
+                        // Pre-compute read-only values before mutable borrow
+                        struct SideInfo {
+                            has_junctions: bool,
+                            total_length: f64,
+                            avg_height: f64,
+                            gross_m2: f64,
+                            net_m2: f64,
+                            section_net_areas: Vec<f64>,
+                        }
+                        let (left_info, right_info) =
                             if let Some(w) = self.project.walls.iter().find(|w| w.id == id) {
+                                let left_section_nets: Vec<f64> = (0..w.left_side.sections.len())
+                                    .map(|i| section_net_area(w, WallSide::Left, i, &self.project.openings))
+                                    .collect();
+                                let right_section_nets: Vec<f64> = (0..w.right_side.sections.len())
+                                    .map(|i| section_net_area(w, WallSide::Right, i, &self.project.openings))
+                                    .collect();
+                                let left_gross = w.left_side.computed_gross_area();
+                                let open_area = crate::model::opening_area_mm2(w, &self.project.openings);
+                                let right_gross = w.right_side.computed_gross_area();
                                 (
-                                    !w.left_side.junctions.is_empty(),
-                                    w.left_side.computed_total_length(&self.project.walls),
-                                    !w.right_side.junctions.is_empty(),
-                                    w.right_side.computed_total_length(&self.project.walls),
+                                    SideInfo {
+                                        has_junctions: !w.left_side.junctions.is_empty(),
+                                        total_length: w.left_side.computed_total_length(&self.project.walls),
+                                        avg_height: w.left_side.average_height(),
+                                        gross_m2: left_gross / 1_000_000.0,
+                                        net_m2: (left_gross - open_area).max(0.0) / 1_000_000.0,
+                                        section_net_areas: left_section_nets,
+                                    },
+                                    SideInfo {
+                                        has_junctions: !w.right_side.junctions.is_empty(),
+                                        total_length: w.right_side.computed_total_length(&self.project.walls),
+                                        avg_height: w.right_side.average_height(),
+                                        gross_m2: right_gross / 1_000_000.0,
+                                        net_m2: (right_gross - open_area).max(0.0) / 1_000_000.0,
+                                        section_net_areas: right_section_nets,
+                                    },
                                 )
                             } else {
-                                (false, 0.0, false, 0.0)
+                                let empty = SideInfo {
+                                    has_junctions: false,
+                                    total_length: 0.0,
+                                    avg_height: 0.0,
+                                    gross_m2: 0.0,
+                                    net_m2: 0.0,
+                                    section_net_areas: Vec::new(),
+                                };
+                                (empty, SideInfo {
+                                    has_junctions: false,
+                                    total_length: 0.0,
+                                    avg_height: 0.0,
+                                    gross_m2: 0.0,
+                                    net_m2: 0.0,
+                                    section_net_areas: Vec::new(),
+                                })
                             };
 
                         if let Some(wall) = self.project.walls.iter_mut().find(|w| w.id == id) {
@@ -78,90 +122,58 @@ impl App {
 
                             ui.add_space(8.0);
 
-                            let left_color = egui::Color32::from_rgb(100, 160, 220);
-                            ui.horizontal(|ui| {
-                                ui.colored_label(left_color, "■");
-                                ui.label("Левая сторона");
-                            });
+                            let left_section_count = wall.left_side.sections.len();
+
+                            ui.label("Левая сторона");
                             ui.indent("left_side", |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label("Длина (мм):");
-                                    if left_has_junctions {
-                                        ui.label(format!("{:.0}", left_total));
+                                    if left_info.has_junctions {
+                                        ui.label(format!("{:.0}", left_info.total_length));
                                     } else {
-                                        ui.add(
-                                            egui::DragValue::new(&mut wall.left_side.length)
-                                                .range(1.0..=100000.0)
-                                                .speed(10.0),
-                                        );
+                                        ui.label(format!("{:.0}", wall.left_side.length));
                                     }
                                 });
                                 ui.horizontal(|ui| {
-                                    ui.label("Высота начала (мм):");
-                                    ui.add(
-                                        egui::DragValue::new(&mut wall.left_side.height_start)
-                                            .range(100.0..=10000.0)
-                                            .speed(10.0),
-                                    );
+                                    ui.label("Средняя высота (мм):");
+                                    ui.label(format!("{:.0}", left_info.avg_height));
                                 });
                                 ui.horizontal(|ui| {
-                                    ui.label("Высота конца (мм):");
-                                    ui.add(
-                                        egui::DragValue::new(&mut wall.left_side.height_end)
-                                            .range(100.0..=10000.0)
-                                            .speed(10.0),
-                                    );
+                                    ui.label("Площадь (брутто):");
+                                    ui.label(format!("{:.2} м²", left_info.gross_m2));
                                 });
-                                let left_area_m2 = wall.left_side.gross_area() / 1_000_000.0;
                                 ui.horizontal(|ui| {
-                                    ui.label("Площадь:");
-                                    ui.label(format!("{:.2} м²", left_area_m2));
+                                    ui.label("Площадь (нетто):");
+                                    ui.label(format!("{:.2} м²", left_info.net_m2));
                                 });
-                                Self::show_side_sections(ui, &mut wall.left_side, "left");
+                                Self::show_side_sections(ui, &mut wall.left_side, "left", &left_info.section_net_areas, 0);
                             });
 
                             ui.add_space(4.0);
 
-                            let right_color = egui::Color32::from_rgb(170, 100, 200);
-                            ui.horizontal(|ui| {
-                                ui.colored_label(right_color, "■");
-                                ui.label("Правая сторона");
-                            });
+                            ui.label("Правая сторона");
                             ui.indent("right_side", |ui| {
                                 ui.horizontal(|ui| {
                                     ui.label("Длина (мм):");
-                                    if right_has_junctions {
-                                        ui.label(format!("{:.0}", right_total));
+                                    if right_info.has_junctions {
+                                        ui.label(format!("{:.0}", right_info.total_length));
                                     } else {
-                                        ui.add(
-                                            egui::DragValue::new(&mut wall.right_side.length)
-                                                .range(1.0..=100000.0)
-                                                .speed(10.0),
-                                        );
+                                        ui.label(format!("{:.0}", wall.right_side.length));
                                     }
                                 });
                                 ui.horizontal(|ui| {
-                                    ui.label("Высота начала (мм):");
-                                    ui.add(
-                                        egui::DragValue::new(&mut wall.right_side.height_start)
-                                            .range(100.0..=10000.0)
-                                            .speed(10.0),
-                                    );
+                                    ui.label("Средняя высота (мм):");
+                                    ui.label(format!("{:.0}", right_info.avg_height));
                                 });
                                 ui.horizontal(|ui| {
-                                    ui.label("Высота конца (мм):");
-                                    ui.add(
-                                        egui::DragValue::new(&mut wall.right_side.height_end)
-                                            .range(100.0..=10000.0)
-                                            .speed(10.0),
-                                    );
+                                    ui.label("Площадь (брутто):");
+                                    ui.label(format!("{:.2} м²", right_info.gross_m2));
                                 });
-                                let right_area_m2 = wall.right_side.gross_area() / 1_000_000.0;
                                 ui.horizontal(|ui| {
-                                    ui.label("Площадь:");
-                                    ui.label(format!("{:.2} м²", right_area_m2));
+                                    ui.label("Площадь (нетто):");
+                                    ui.label(format!("{:.2} м²", right_info.net_m2));
                                 });
-                                Self::show_side_sections(ui, &mut wall.right_side, "right");
+                                Self::show_side_sections(ui, &mut wall.right_side, "right", &right_info.section_net_areas, left_section_count);
                             });
 
                             ui.add_space(8.0);
@@ -173,12 +185,11 @@ impl App {
                             self.editor.selection = Selection::None;
                         }
 
-                        if self.project.walls.iter().any(|w| w.id == id) {
-                            let left_color = egui::Color32::from_rgb(100, 160, 220);
-                            let right_color = egui::Color32::from_rgb(170, 100, 200);
-                            self.show_wall_side_services(ui, id, WallSide::Left, "Левая сторона", left_color);
+                        if let Some(wall) = self.project.walls.iter().find(|w| w.id == id) {
+                            let left_section_count = wall.left_side.sections.len();
+                            self.show_wall_side_services(ui, id, WallSide::Left, "Левая сторона", 0);
                             ui.add_space(4.0);
-                            self.show_wall_side_services(ui, id, WallSide::Right, "Правая сторона", right_color);
+                            self.show_wall_side_services(ui, id, WallSide::Right, "Правая сторона", left_section_count);
                         }
                     }
                     Selection::Opening(id) => {
