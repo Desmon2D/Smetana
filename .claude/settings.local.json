@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rustc:*)",
+      "Bash(cargo --version:*)",
+      "Bash(export:*)",
+      "Bash(cd:*)",
+      "Bash(cd \"C:/Users/Desmon2d/source/repos/Smetana\" && cargo build 2>&1)",
+      "Bash(head:*)",
+      "Bash(echo exit: $?:*)",
+      "Bash(cd C:/Users/Desmon2d/source/repos/Smetana && cargo build 2>&1)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo build 2>&1)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo test 2>&1)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo build 2>&1 && cargo test 2>&1)",
+      "Bash(cd C:/Users/Desmon2d/source/repos/Smetana && cargo check 2>&1)",
+      "Bash(find:*)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo check 2>&1)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo clippy 2>&1)",
+      "Bash(tail:*)"
+    ]
+  },
+  "prefersReducedMotion": false
+}

@@ -207,7 +207,7 @@ impl App {
                     painter,
                     mid,
                     label,
-                    egui::FontId::proportional(10.0),
+                    egui::FontId::proportional(10.0 * self.label_scale),
                     egui::Color32::BLACK,
                     wall_angle,
                 );
@@ -245,7 +245,7 @@ impl App {
                         painter,
                         egui::pos2(mid_x, mid_y),
                         label,
-                        egui::FontId::proportional(9.0),
+                        egui::FontId::proportional(9.0 * self.label_scale),
                         label_color,
                         wall_angle,
                     );
@@ -323,7 +323,7 @@ impl App {
                         painter,
                         mid,
                         label,
-                        egui::FontId::proportional(12.0),
+                        egui::FontId::proportional(12.0 * self.label_scale),
                         preview_color,
                         preview_angle,
                     );
@@ -395,7 +395,7 @@ impl App {
                         egui::pos2(screen_pos.x, r.top() - 4.0),
                         egui::Align2::CENTER_BOTTOM,
                         label,
-                        egui::FontId::proportional(12.0),
+                        egui::FontId::proportional(12.0 * self.label_scale),
                         red,
                     );
                     continue;
@@ -586,16 +586,16 @@ impl App {
                 egui::pos2(cx, cy),
                 egui::Align2::CENTER_CENTER,
                 &room.name,
-                egui::FontId::proportional(13.0),
+                egui::FontId::proportional(13.0 * self.label_scale),
                 label_color,
             );
 
             let area_m2 = metrics.net_area / 1_000_000.0;
             painter.text(
-                egui::pos2(cx, cy + 16.0),
+                egui::pos2(cx, cy + 16.0 * self.label_scale),
                 egui::Align2::CENTER_CENTER,
                 format!("{:.1} м²", area_m2),
-                egui::FontId::proportional(11.0),
+                egui::FontId::proportional(11.0 * self.label_scale),
                 label_color,
             );
         }
@@ -678,7 +678,7 @@ impl App {
             egui::pos2(p_center.x, p_center.y - half_thick_screen - 10.0),
             egui::Align2::CENTER_BOTTOM,
             label,
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(11.0 * self.label_scale),
             preview_color,
         );
     }

@@ -52,6 +52,7 @@ pub struct App {
     price_list_filter: String,
     last_saved_version: u64,
     dirty: bool,
+    label_scale: f32,
 }
 
 impl App {
@@ -80,6 +81,7 @@ impl App {
             price_list_filter: String::new(),
             last_saved_version: 0,
             dirty: false,
+            label_scale: 1.0,
         }
     }
 

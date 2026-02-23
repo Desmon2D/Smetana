@@ -172,6 +172,12 @@ impl App {
                 ui.heading("Структура проекта");
                 ui.separator();
 
+                ui.horizontal(|ui| {
+                    ui.label("Размер подписей:");
+                    ui.add(egui::Slider::new(&mut self.label_scale, 0.5..=3.0).step_by(0.1));
+                });
+                ui.separator();
+
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.label(format!("Стен: {}", self.project.walls.len()));
                     ui.label(format!("Проёмов: {}", self.project.openings.len()));
