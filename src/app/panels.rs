@@ -1,6 +1,7 @@
 use eframe::egui;
 
-use super::{App, AppScreen, Selection, Tool, VisibilityMode};
+use super::{App, AppScreen, Selection, Tool};
+use super::viewport::VisibilityMode;
 use crate::model::{OpeningKind, ProjectDefaults};
 
 // ---------------------------------------------------------------------------
@@ -238,9 +239,11 @@ impl App {
                     self.show_project_settings = !self.show_project_settings;
                 }
 
-                if let Some(msg) = &self.status_message {
+                if let Some((msg, created)) = &self.status_message
+                    && created.elapsed().as_secs() < 5
+                {
                     ui.separator();
-                    ui.label(msg);
+                    ui.label(msg.as_str());
                 }
             });
         });
@@ -574,69 +577,58 @@ impl App {
     }
 
     fn show_room_properties(&mut self, ui: &mut egui::Ui, id: uuid::Uuid) {
-        let metrics = self.project.room(id).map(|r| {
-            let area_m2 = r.floor_area(&self.project) / 1_000_000.0;
-            let perimeter_m = r.perimeter(&self.project) / 1000.0;
-            let point_count = r.points.len();
-            let cutout_count = r.cutouts.len();
-            (area_m2, perimeter_m, point_count, cutout_count)
+        let Some(room) = self.project.room(id) else {
+            ui.label("Комната не найдена");
+            self.selection = Selection::None;
+            return;
+        };
+        let area_m2 = room.floor_area(&self.project) / 1_000_000.0;
+        let perimeter_m = room.perimeter(&self.project) / 1000.0;
+        let point_count = room.points.len();
+        let cutout_count = room.cutouts.len();
+
+        ui.label("Комната");
+        ui.add_space(8.0);
+
+        let Some(room) = self.project.room_mut(id) else {
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.label("Название:");
+            if ui.text_edit_singleline(&mut room.name).changed() {
+                self.history.mark_dirty();
+            }
         });
 
-        if let Some(room) = self.project.rooms.iter_mut().find(|r| r.id == id) {
-            ui.label("Комната");
-            ui.add_space(8.0);
+        ui.add_space(4.0);
 
-            ui.horizontal(|ui| {
-                ui.label("Название:");
-                if ui.text_edit_singleline(&mut room.name).changed() {
-                    self.history.mark_dirty();
-                }
-            });
+        labeled_value(ui, "Площадь пола:", format!("{:.3} м²", area_m2));
+        labeled_value(ui, "Периметр:", format!("{:.3} м", perimeter_m));
+        labeled_value(ui, "Точек:", format!("{}", point_count));
+        labeled_value(ui, "Вырезов:", format!("{}", cutout_count));
 
-            ui.add_space(4.0);
+        ui.add_space(8.0);
 
-            if let Some((area_m2, perimeter_m, point_count, cutout_count)) = metrics {
-                labeled_value(ui, "Площадь пола:", format!("{:.3} м²", area_m2));
-                labeled_value(ui, "Периметр:", format!("{:.3} м", perimeter_m));
-                labeled_value(ui, "Точек:", format!("{}", point_count));
-                labeled_value(ui, "Вырезов:", format!("{}", cutout_count));
-            }
+        if ui.button("Добавить вырез").clicked() {
+            self.tool_state.building_cutout = true;
+            self.tool_state.points.clear();
+            self.active_tool = Tool::Room;
+        }
 
-            ui.add_space(8.0);
-
-            if ui.button("Добавить вырез").clicked() {
-                self.tool_state.building_cutout = true;
-                self.tool_state.points.clear();
-                self.active_tool = Tool::Room;
-            }
-
-            if ui.button("Удалить комнату").clicked() {
-                self.history.snapshot(&self.project);
-                self.project.remove_room(id);
-                self.selection = Selection::None;
-            }
-        } else {
-            ui.label("Комната не найдена");
+        if ui.button("Удалить комнату").clicked() {
+            self.history.snapshot(&self.project);
+            self.project.remove_room(id);
             self.selection = Selection::None;
         }
     }
 
     fn show_wall_properties(&mut self, ui: &mut egui::Ui, id: uuid::Uuid) {
-        let point_count = match self.project.wall(id) {
-            Some(w) => w.points.len(),
-            None => {
-                ui.label("Стена не найдена");
-                self.selection = Selection::None;
-                return;
-            }
+        let Some(wall) = self.project.wall(id) else {
+            ui.label("Стена не найдена");
+            self.selection = Selection::None;
+            return;
         };
-
-        ui.label("Стена");
-        ui.add_space(8.0);
-
-        self.ensure_edit_snapshot();
-
-        let wall = self.project.wall(id).unwrap();
+        let point_count = wall.points.len();
         let mut color = egui::Color32::from_rgba_premultiplied(
             wall.color[0],
             wall.color[1],
@@ -644,10 +636,15 @@ impl App {
             wall.color[3],
         );
 
+        ui.label("Стена");
+        ui.add_space(8.0);
+
+        self.ensure_edit_snapshot();
+
         ui.horizontal(|ui| {
             ui.label("Цвет:");
             if ui.color_edit_button_srgba(&mut color).changed()
-                && let Some(wall) = self.project.walls.iter_mut().find(|w| w.id == id)
+                && let Some(wall) = self.project.wall_mut(id)
             {
                 wall.color = [color.r(), color.g(), color.b(), color.a()];
             }
@@ -707,44 +704,43 @@ impl App {
     }
 
     fn show_label_properties(&mut self, ui: &mut egui::Ui, id: uuid::Uuid) {
-        let is_empty = self
+        if self
             .project
-            .labels
-            .iter()
-            .find(|l| l.id == id)
-            .is_some_and(|l| l.text.trim().is_empty());
-        if is_empty {
-            self.project.labels.retain(|l| l.id != id);
+            .label(id)
+            .is_some_and(|l| l.text.trim().is_empty())
+        {
+            self.project.remove_label(id);
             self.selection = Selection::None;
             return;
         }
 
-        if let Some(label) = self.project.labels.iter_mut().find(|l| l.id == id) {
-            ui.label("Подпись");
-            ui.add_space(8.0);
-
-            ui.horizontal(|ui| {
-                ui.label("Текст:");
-                if ui.text_edit_singleline(&mut label.text).changed() {
-                    self.history.mark_dirty();
-                }
-            });
-
-            labeled_drag(
-                ui,
-                "Размер шрифта:",
-                &mut label.font_size,
-                6.0..=72.0,
-                0.5,
-            );
-
-            let mut rotation_deg = label.rotation.to_degrees();
-            if labeled_drag(ui, "Поворот (°):", &mut rotation_deg, 0.0..=360.0, 1.0) {
-                label.rotation = rotation_deg.to_radians();
-            }
-        } else {
+        let Some(label) = self.project.label_mut(id) else {
             ui.label("Подпись не найдена");
             self.selection = Selection::None;
+            return;
+        };
+
+        ui.label("Подпись");
+        ui.add_space(8.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Текст:");
+            if ui.text_edit_singleline(&mut label.text).changed() {
+                self.history.mark_dirty();
+            }
+        });
+
+        labeled_drag(
+            ui,
+            "Размер шрифта:",
+            &mut label.font_size,
+            6.0..=72.0,
+            0.5,
+        );
+
+        let mut rotation_deg = label.rotation.to_degrees();
+        if labeled_drag(ui, "Поворот (°):", &mut rotation_deg, 0.0..=360.0, 1.0) {
+            label.rotation = rotation_deg.to_radians();
         }
     }
 }

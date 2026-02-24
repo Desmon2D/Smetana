@@ -419,6 +419,17 @@ pub struct Project {
     pub defaults: ProjectDefaults,
 }
 
+macro_rules! entity_lookup {
+    ($field:ident, $T:ty, $get:ident, $get_mut:ident) => {
+        pub fn $get(&self, id: Uuid) -> Option<&$T> {
+            self.$field.iter().find(|x| x.id == id)
+        }
+        pub fn $get_mut(&mut self, id: Uuid) -> Option<&mut $T> {
+            self.$field.iter_mut().find(|x| x.id == id)
+        }
+    };
+}
+
 impl Project {
     pub fn new(name: String) -> Self {
         Self {
@@ -436,37 +447,12 @@ impl Project {
 
     // --- Lookup by ID ---
 
-    pub fn point(&self, id: Uuid) -> Option<&Point> {
-        self.points.iter().find(|p| p.id == id)
-    }
-
-    pub fn point_mut(&mut self, id: Uuid) -> Option<&mut Point> {
-        self.points.iter_mut().find(|p| p.id == id)
-    }
-
-    pub fn edge(&self, id: Uuid) -> Option<&Edge> {
-        self.edges.iter().find(|e| e.id == id)
-    }
-
-    pub fn edge_mut(&mut self, id: Uuid) -> Option<&mut Edge> {
-        self.edges.iter_mut().find(|e| e.id == id)
-    }
-
-    pub fn room(&self, id: Uuid) -> Option<&Room> {
-        self.rooms.iter().find(|r| r.id == id)
-    }
-
-    pub fn wall(&self, id: Uuid) -> Option<&Wall> {
-        self.walls.iter().find(|w| w.id == id)
-    }
-
-    pub fn opening(&self, id: Uuid) -> Option<&Opening> {
-        self.openings.iter().find(|o| o.id == id)
-    }
-
-    pub fn opening_mut(&mut self, id: Uuid) -> Option<&mut Opening> {
-        self.openings.iter_mut().find(|o| o.id == id)
-    }
+    entity_lookup!(points, Point, point, point_mut);
+    entity_lookup!(edges, Edge, edge, edge_mut);
+    entity_lookup!(rooms, Room, room, room_mut);
+    entity_lookup!(walls, Wall, wall, wall_mut);
+    entity_lookup!(openings, Opening, opening, opening_mut);
+    entity_lookup!(labels, Label, label, label_mut);
 
     /// Resolve a list of point IDs to their world-space positions.
     pub fn resolve_positions(&self, ids: &[Uuid]) -> Vec<DVec2> {
@@ -480,13 +466,6 @@ impl Project {
     pub fn find_edge(&self, a: Uuid, b: Uuid) -> Option<&Edge> {
         self.edges
             .iter()
-            .find(|e| (e.point_a == a && e.point_b == b) || (e.point_a == b && e.point_b == a))
-    }
-
-    #[allow(dead_code)]
-    pub fn find_edge_mut(&mut self, a: Uuid, b: Uuid) -> Option<&mut Edge> {
-        self.edges
-            .iter_mut()
             .find(|e| (e.point_a == a && e.point_b == b) || (e.point_a == b && e.point_b == a))
     }
 

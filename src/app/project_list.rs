@@ -155,9 +155,9 @@ impl App {
                 }
             }
 
-            if let Some(msg) = &self.status_message {
+            if let Some((msg, _)) = &self.status_message {
                 ui.add_space(8.0);
-                ui.colored_label(egui::Color32::RED, msg);
+                ui.colored_label(egui::Color32::RED, msg.as_str());
             }
         });
     }

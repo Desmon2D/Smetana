@@ -45,37 +45,30 @@ pub fn load_project(path: &Path) -> Result<Project, String> {
     Ok(project)
 }
 
-/// List all project JSON files in the saves directory.
-pub fn list_projects() -> Result<Vec<PathBuf>, String> {
+/// List projects with metadata (name derived from filename, last modified date).
+pub fn list_project_entries() -> Result<Vec<ProjectEntry>, String> {
     ensure_saves_dirs()?;
-    let entries = fs::read_dir(PROJECTS_DIR).map_err(|e| format!("Ошибка чтения каталога: {e}"))?;
-    let mut paths: Vec<PathBuf> = entries
+    let dir_entries =
+        fs::read_dir(PROJECTS_DIR).map_err(|e| format!("Ошибка чтения каталога: {e}"))?;
+    let mut entries: Vec<ProjectEntry> = dir_entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+        .map(|path| {
+            let name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let modified = fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            ProjectEntry {
+                name,
+                path,
+                modified,
+            }
+        })
         .collect();
-    paths.sort();
-    Ok(paths)
-}
-
-/// List projects with metadata (name derived from filename, last modified date).
-pub fn list_project_entries() -> Result<Vec<ProjectEntry>, String> {
-    let paths = list_projects()?;
-    let mut entries = Vec::new();
-    for path in paths {
-        let name = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let modified = fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        entries.push(ProjectEntry {
-            name,
-            path,
-            modified,
-        });
-    }
     // Sort by last modified, newest first
     entries.sort_by(|a, b| b.modified.cmp(&a.modified));
     Ok(entries)
