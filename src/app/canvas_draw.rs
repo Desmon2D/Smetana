@@ -256,7 +256,8 @@ impl App {
         let (overlays, section_labels) =
             self.draw_wall_geometry(painter, rect, &joint_map);
 
-        // Hub polygons (joint fills) between passes
+        // Hub polygons (joint fills) between passes — use triangulation
+        // instead of convex_polygon to handle non-convex hub shapes correctly.
         let wall_outline = egui::Color32::from_rgb(40, 40, 42);
         for hub in &hub_polygons {
             if hub.vertices.len() >= 3 {
@@ -264,9 +265,13 @@ impl App {
                     .iter()
                     .map(|p| world_to_screen(&self.editor.canvas, center, *p))
                     .collect();
-                painter.add(egui::Shape::convex_polygon(
+                let triangles = triangulate(&screen_verts);
+                for tri in &triangles {
+                    let tri_pts = vec![screen_verts[tri[0]], screen_verts[tri[1]], screen_verts[tri[2]]];
+                    painter.add(egui::Shape::convex_polygon(tri_pts, hub.fill, egui::Stroke::NONE));
+                }
+                painter.add(egui::Shape::closed_line(
                     screen_verts,
-                    hub.fill,
                     egui::Stroke::new(1.0, wall_outline),
                 ));
             }
@@ -741,7 +746,7 @@ impl App {
     // -----------------------------------------------------------------------
 
     pub(super) fn draw_rooms(&self, painter: &egui::Painter, rect: egui::Rect) {
-        use crate::model::room_metrics::compute_room_metrics;
+        use crate::model::room_metrics::{compute_room_metrics, point_in_polygon, RoomMetrics};
 
         let center = rect.center();
 
@@ -756,15 +761,52 @@ impl App {
             (123, 104, 238),
         ];
 
-        for (i, room) in self.project.rooms.iter().enumerate() {
-            let metrics = match compute_room_metrics(room, &self.project.walls) {
-                Some(m) => m,
-                None => continue,
-            };
+        // Pass 1: compute metrics for all rooms
+        let room_metrics: Vec<Option<RoomMetrics>> = self.project.rooms.iter()
+            .map(|room| compute_room_metrics(room, &self.project.walls))
+            .collect();
 
-            if metrics.inner_polygon.len() < 3 {
-                continue;
+        // Pass 2: detect nesting — room j is nested inside room i if j's
+        // centroid lies inside i's inner polygon.
+        let mut nested_in: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+
+        for (i, outer_metrics) in room_metrics.iter().enumerate() {
+            let outer = match outer_metrics {
+                Some(m) if m.inner_polygon.len() >= 3 => m,
+                _ => continue,
+            };
+            for (j, inner_metrics) in room_metrics.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                let inner = match inner_metrics {
+                    Some(m) if m.inner_polygon.len() >= 3 => m,
+                    _ => continue,
+                };
+                // Use centroid of inner room
+                let centroid = {
+                    let sum = inner.inner_polygon.iter().fold(
+                        glam::DVec2::ZERO,
+                        |acc, p| acc + *p,
+                    );
+                    sum / inner.inner_polygon.len() as f64
+                };
+                if point_in_polygon(centroid, &outer.inner_polygon) {
+                    // j is nested inside i — but only if j's area < i's area
+                    if inner.net_area < outer.net_area {
+                        nested_in.entry(i).or_default().push(j);
+                    }
+                }
             }
+        }
+
+        // Pass 3: render rooms
+        for (i, room) in self.project.rooms.iter().enumerate() {
+            let metrics = match &room_metrics[i] {
+                Some(m) if m.inner_polygon.len() >= 3 => m,
+                _ => continue,
+            };
 
             let (r, g, b) = ROOM_COLORS[i % ROOM_COLORS.len()];
             let fill = egui::Color32::from_rgba_unmultiplied(r, g, b, 40);
@@ -779,11 +821,46 @@ impl App {
                 })
                 .collect();
 
-            let triangles = triangulate(&screen_pts);
-            for tri in &triangles {
-                let tri_pts = vec![screen_pts[tri[0]], screen_pts[tri[1]], screen_pts[tri[2]]];
-                painter.add(egui::Shape::convex_polygon(tri_pts, fill, egui::Stroke::NONE));
+            // Triangulate with holes if this room contains nested rooms
+            if let Some(nested_indices) = nested_in.get(&i) {
+                // Build coords with hole polygons
+                let mut coords: Vec<f32> = screen_pts.iter().flat_map(|p| [p.x, p.y]).collect();
+                let mut hole_indices = Vec::new();
+
+                for &nested_idx in nested_indices {
+                    let nested_metrics = match &room_metrics[nested_idx] {
+                        Some(m) if m.inner_polygon.len() >= 3 => m,
+                        _ => continue,
+                    };
+                    hole_indices.push(coords.len() / 2);
+                    // Reverse winding for hole
+                    for p in nested_metrics.inner_polygon.iter().rev() {
+                        let sp = self.editor.canvas.world_to_screen(
+                            egui::pos2(p.x as f32, p.y as f32),
+                            center,
+                        );
+                        coords.extend([sp.x, sp.y]);
+                    }
+                }
+
+                let all_pts: Vec<egui::Pos2> = coords.chunks(2)
+                    .map(|c| egui::pos2(c[0], c[1]))
+                    .collect();
+                let indices = earcutr::earcut(&coords, &hole_indices, 2).unwrap_or_default();
+                for tri in indices.chunks(3) {
+                    if tri.len() == 3 {
+                        let tri_pts = vec![all_pts[tri[0]], all_pts[tri[1]], all_pts[tri[2]]];
+                        painter.add(egui::Shape::convex_polygon(tri_pts, fill, egui::Stroke::NONE));
+                    }
+                }
+            } else {
+                let triangles = triangulate(&screen_pts);
+                for tri in &triangles {
+                    let tri_pts = vec![screen_pts[tri[0]], screen_pts[tri[1]], screen_pts[tri[2]]];
+                    painter.add(egui::Shape::convex_polygon(tri_pts, fill, egui::Stroke::NONE));
+                }
             }
+
             painter.add(egui::Shape::closed_line(screen_pts.clone(), egui::Stroke::new(1.0, fill)));
 
             let cx: f32 = screen_pts.iter().map(|p| p.x).sum::<f32>() / screen_pts.len() as f32;
@@ -798,7 +875,18 @@ impl App {
                 label_color,
             );
 
-            let area_m2 = metrics.net_area / 1_000_000.0;
+            // Subtract nested room areas from outer room display
+            let mut display_area = metrics.net_area;
+            if let Some(nested_indices) = nested_in.get(&i) {
+                for &nested_idx in nested_indices {
+                    if let Some(nested_m) = &room_metrics[nested_idx] {
+                        display_area -= nested_m.net_area;
+                    }
+                }
+                display_area = display_area.max(0.0);
+            }
+
+            let area_m2 = display_area / 1_000_000.0;
             painter.text(
                 egui::pos2(cx, cy + 16.0 * self.label_scale),
                 egui::Align2::CENTER_CENTER,

@@ -6,7 +6,9 @@ use crate::editor::endpoint_merge::merge_endpoints;
 use crate::model::{Room, Wall, WallSide};
 
 /// Tolerance for merging vertices (in mm).
-const MERGE_EPSILON: f64 = 5.0;
+/// Kept small (0.5mm) so only truly shared endpoints merge — the snap system
+/// places exact coordinates, and larger values cause false connectivity.
+const MERGE_EPSILON: f64 = 0.5;
 
 /// A vertex in the wall graph, representing a merged endpoint.
 #[derive(Debug, Clone)]
@@ -164,9 +166,11 @@ impl WallGraph {
             }
         }
 
-        // Step 4: Sort each vertex's edges by angle
+        // Step 4: Sort each vertex's edges by angle and dedup parallel edges
+        // to the same neighbor (can arise after force-merge).
         for adj in &mut adjacency {
             adj.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+            adj.dedup_by(|a, b| a.0 == b.0);
         }
 
         // Build the graph
@@ -275,6 +279,9 @@ impl WallGraph {
             cycles.remove(max_idx);
         }
 
+        // Remove degenerate micro-cycles (area < 0.01 m² = 10_000 mm²)
+        cycles.retain(|cycle| self.signed_area(cycle).abs() > 10_000.0);
+
         cycles
     }
 
@@ -329,10 +336,6 @@ impl WallGraph {
 
             for edge in cycle {
                 let wall_id = edge.wall_id;
-                // Avoid duplicate wall IDs in the same room
-                if wall_ids.contains(&wall_id) {
-                    continue;
-                }
 
                 // Determine if this directed edge goes in the same direction as the wall
                 let wall = match walls.iter().find(|w| w.id == wall_id) {

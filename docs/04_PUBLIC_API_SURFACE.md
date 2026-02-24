@@ -127,13 +127,14 @@
 | `WallGraph::signed_area(&self, cycle: &[DirectedEdge]) -> f64` | Shoelace signed area of a cycle |
 | `WallGraph::detect_rooms(&self, walls: &[Wall]) -> Vec<Room>` | Full pipeline: cycles → wall sides → Room structs |
 
-**Constants:** `MERGE_EPSILON: f64 = 5.0`
+**Constants:** `MERGE_EPSILON: f64 = 0.5`
 
 ## `src/model/room_metrics.rs` — Room Metrics
 
 | Signature | Purpose |
 |-----------|---------|
 | `compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics>` | Compute inner polygon, net/gross area, perimeter |
+| `point_in_polygon(point: DVec2, polygon: &[DVec2]) -> bool` | Ray-casting point-in-polygon test for nested room detection |
 
 ## `src/editor/endpoint_merge.rs` — Endpoint Merging
 
@@ -147,7 +148,7 @@
 |-----------|---------|
 | `compute_joints(walls: &[Wall]) -> (HashMap<(Uuid, bool), JointVertices>, Vec<HubPolygon>)` | Compute world-space miter joints and hub polygons for all wall junctions |
 
-**Constants:** `MERGE_EPS: f64 = 5.0`, `MAX_MITER_RATIO: f64 = 3.0`
+**Constants:** `MERGE_EPS: f64 = 0.5`, `MAX_MITER_RATIO: f64 = 3.0`
 
 ## `src/app/history.rs` — Snapshot Undo/Redo
 

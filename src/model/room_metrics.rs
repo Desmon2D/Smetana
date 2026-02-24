@@ -74,17 +74,33 @@ pub fn compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics> 
 
         match line_intersection(a1, a2, b1, b2) {
             Some(pt) => inner_polygon.push(pt),
-            None => inner_polygon.push(offset_segments[i].1),
+            // Collinear walls: use midpoint of adjacent segment endpoints
+            None => inner_polygon.push((offset_segments[i].1 + offset_segments[j].0) / 2.0),
         }
     }
 
     // Net area from inner polygon (Shoelace formula)
-    // Note: internal partition wall area is not subtracted. Reintroduce column_wall_area if needed.
     let polygon_area = shoelace_area(&inner_polygon);
-    let net_area = polygon_area;
 
     // Gross area from centerline polygon (segment endpoints, no offset)
     let gross_area = centerline_area(room).unwrap_or(polygon_area);
+
+    // Guard against self-intersecting inner polygon (concave rooms with thick walls).
+    // If the shoelace area is suspiciously small compared to gross area, fall back
+    // to an estimated net area.
+    let net_area = if gross_area > 0.0 && polygon_area < gross_area * 0.1 {
+        let avg_thickness: f64 = room.wall_ids.iter()
+            .filter_map(|id| walls.iter().find(|w| w.id == *id))
+            .map(|w| w.thickness)
+            .sum::<f64>()
+            / room.wall_ids.len().max(1) as f64;
+        let perimeter_estimate: f64 = room.wall_segments.iter()
+            .map(|(a, b)| a.distance(*b))
+            .sum();
+        (gross_area - perimeter_estimate * avg_thickness / 2.0).max(0.0)
+    } else {
+        polygon_area
+    };
 
     // Perimeter from room-facing side section lengths
     // (uses section lengths which exclude junction wall thicknesses)
@@ -191,4 +207,26 @@ fn line_intersection(a1: DVec2, a2: DVec2, b1: DVec2, b2: DVec2) -> Option<DVec2
     }
     let t = (b1 - a1).perp_dot(d2) / denom;
     Some(a1 + d1 * t)
+}
+
+/// Ray-casting point-in-polygon test.
+/// Returns true if `point` is inside the polygon defined by `polygon` vertices.
+pub fn point_in_polygon(point: DVec2, polygon: &[DVec2]) -> bool {
+    let n = polygon.len();
+    if n < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let pi = polygon[i];
+        let pj = polygon[j];
+        if ((pi.y > point.y) != (pj.y > point.y))
+            && (point.x < (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x)
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
 }

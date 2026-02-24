@@ -8,7 +8,8 @@ use crate::editor::endpoint_merge::merge_endpoints;
 use crate::model::Wall;
 
 /// Merge epsilon for detecting shared endpoints (mm).
-const MERGE_EPS: f64 = 5.0;
+/// Kept small (0.5mm) — the snap system sets exact positions.
+const MERGE_EPS: f64 = 0.5;
 
 /// Maximum miter extension as a multiple of the thicker wall's half-thickness.
 const MAX_MITER_RATIO: f64 = 3.0;
@@ -324,6 +325,14 @@ fn compute_hub_polygon(
     let n = waj_list.len();
     let mut hub_vertices: Vec<DVec2> = Vec::new();
 
+    // Compute junction center (average of all wall from-points at this junction)
+    let junction_center = {
+        let sum: DVec2 = waj_list.iter()
+            .map(|w| (w.left + w.right) / 2.0)
+            .fold(DVec2::ZERO, |acc, p| acc + p);
+        sum / n as f64
+    };
+
     // Walk walls in angular order (sorted by increasing atan2 angle).
     // Between consecutive walls i and i+1, the gap is bounded by
     // wall_i's CW-facing edge and wall_{i+1}'s CCW-facing edge.
@@ -335,12 +344,20 @@ fn compute_hub_polygon(
         let miter = line_line_intersection(wa.cw_edge(), wa.dir, wb.ccw_edge(), wb.dir);
 
         let max_half = wa.half_thick.max(wb.half_thick);
-        let junction_approx = (wa.cw_edge() + wb.ccw_edge()) / 2.0;
         let max_dist = max_half * MAX_MITER_RATIO;
 
         let pt = match miter {
-            Some(p) if p.distance(junction_approx) < max_dist => p,
-            _ => junction_approx,
+            Some(p) if p.distance(junction_center) < max_dist => p,
+            _ => {
+                // Fallback: point on the angle bisector at distance max_half from center
+                let bisector = (wa.cw_edge() - junction_center) + (wb.ccw_edge() - junction_center);
+                let bisector_len = bisector.length();
+                if bisector_len > 1e-6 {
+                    junction_center + bisector / bisector_len * max_half
+                } else {
+                    (wa.cw_edge() + wb.ccw_edge()) / 2.0
+                }
+            }
         };
 
         hub_vertices.push(pt);

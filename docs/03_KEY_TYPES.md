@@ -367,7 +367,7 @@ pub struct SnapResult {
 pub struct RoomMetrics {
     pub inner_polygon: Vec<DVec2>,
     pub gross_area: f64,   // mm² (centerline polygon)
-    pub net_area: f64,     // mm² (interior polygon minus columns)
+    pub net_area: f64,     // mm² (interior polygon; guarded against self-intersection)
     pub perimeter: f64,    // mm (sum of room-facing side section lengths)
 }
 ```
