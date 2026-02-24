@@ -2,14 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Detailed Documentation
-
-See [`docs/CODEBASE_INDEX.md`](docs/CODEBASE_INDEX.md) for comprehensive codebase documentation: architecture diagrams, module map, all key types with fields, full public API surface, dependency graph, state management patterns, and build instructions. Start there to skip exploration and jump directly to implementation.
-Read docs/CODEBASE_INDEX.md if you need to explore the code base.
-
 ## Project Overview
 
-**Smetana** (Сметана) is a desktop construction estimate application built in Rust with egui/eframe. It provides a 2D floor plan editor where users draw walls, place doors/windows, auto-detect rooms, assign services from a price list, and generate Excel reports.
+**Smetana** (Сметана) is a desktop construction estimate application built in Rust with egui/eframe. It provides a 2D floor plan editor with a **point-first data model**: users place points, then create rooms, walls, and openings as polygons referencing those points. Edge distances and angles can be overridden for field measurements.
 
 Interface language is Russian. Target: low-end Windows hardware.
 
@@ -18,8 +13,7 @@ Interface language is Russian. Target: low-end Windows hardware.
 ```bash
 cargo build              # Build debug
 cargo run                # Run the application
-cargo test               # Run all tests
-cargo test round_trip    # Run a specific test by name
+cargo test               # Run all tests (14 tests)
 cargo clippy             # Lint
 cargo fmt                # Format code
 ```
@@ -36,83 +30,97 @@ src/
 ├── app/                     # UI rendering and input handling
 │   ├── mod.rs               # App struct, AppScreen enum, eframe::App impl, project management
 │   ├── history.rs           # Snapshot-based History (undo/redo with VecDeque<Project>)
-│   ├── canvas.rs            # Central panel: pan/zoom, tool dispatch, hit-testing, room detection
-│   ├── canvas_draw.rs       # Wall/opening/room/preview rendering (two-pass: geometry then overlays)
+│   ├── canvas.rs            # Central panel: pan/zoom, tool dispatch, hit-testing
+│   ├── canvas_draw.rs       # Rendering: room/wall/opening fills, edges, points, labels, previews
 │   ├── toolbar.rs           # Top toolbar, left panel, keyboard shortcuts, project settings window
 │   ├── project_list.rs      # ProjectList startup screen
-│   ├── properties_panel.rs  # Right panel: wall/opening/room property editors, SideInfo
-│   ├── property_edits.rs    # Validation helpers, section editors, labeled_drag/labeled_value
-│   ├── price_list.rs        # Floating price list CRUD window
-│   ├── service_picker.rs    # Service assignment picker dialog
-│   └── services_panel.rs    # Assigned services display
+│   ├── properties_panel.rs  # Right panel: property editors for all selection types
+│   └── property_edits.rs    # UI helpers: labeled_drag, labeled_value, labeled_drag_override
 ├── model/                   # Pure data types (serde-serializable)
-│   ├── wall.rs              # Wall, SideData, SectionData, SideJunction; free fns distance_to_segment, project_onto_segment
-│   ├── opening.rs           # Opening, OpeningKind (Door | Window), OpeningKind::target_type()
-│   ├── room.rs              # Room, WallSide
-│   ├── project.rs           # Project, ProjectDefaults, AssignedService, SideServices, WallSideServices, mutation/lookup methods
-│   ├── price.rs             # PriceList, ServiceTemplate, UnitType, TargetObjectType
-│   ├── quantity.rs          # Quantity computation functions (wall/opening/room/object)
-│   └── room_metrics.rs      # Inner polygon, net/gross area, perimeter computation
+│   ├── point.rs             # Point { id, position: DVec2, height: f64 }
+│   ├── edge.rs              # Edge { id, point_a, point_b, distance_override, angle_override }; geometry utils
+│   ├── room.rs              # Room { id, name, points, cutouts }; floor_area, perimeter
+│   ├── wall.rs              # Wall { id, points, color } — visual polygon
+│   ├── opening.rs           # Opening { id, points, kind: OpeningKind }
+│   ├── project.rs           # Project, ProjectDefaults, Label; lookup, mutation, cascade delete
+│   └── mod.rs               # Module re-exports
 ├── editor/                  # Canvas viewport and drawing tools
-│   ├── canvas.rs            # Pan/zoom, world↔screen coordinate conversion, grid rendering
-│   ├── wall_tool.rs         # Two-click wall creation state machine with chain support
-│   ├── snap.rs              # Snap: vertex (15px) > wall edge (T-junction) > grid > free (Shift)
-│   ├── room_detection.rs    # Planar graph cycle detection for auto room detection
-│   ├── wall_joints.rs       # Miter joint computation at wall junctions (world-space DVec2)
-│   └── endpoint_merge.rs    # Shared endpoint merging utility for joints and room detection
-├── export/
-│   ├── excel.rs             # export_to_xlsx entry point, ExcelFormats struct, write helpers
-│   └── excel_sheets.rs      # Per-sheet content writers (Rooms, Doors, Estimate)
-└── persistence.rs           # Save/load project and price list JSON to saves/
+│   ├── canvas.rs            # Canvas viewport: pan/zoom, world↔screen coordinate conversion, grid
+│   ├── snap.rs              # Snap: point (15px screen radius) > grid
+│   └── mod.rs               # Tool, Selection, RoomToolState, PolygonToolState, VisibilityMode, EditorState
+└── persistence.rs           # Save/load project JSON to saves/projects/
 ```
+
+### Data Model (Point-First)
+
+All geometry is built from **Points** as the fundamental primitive:
+
+- **Point** — position (DVec2 in mm) + ceiling height. Shared by reference (Uuid) across all objects.
+- **Edge** — connects two points. Distance/angle can be overridden for field measurements. Created automatically via `ensure_edge()` / `ensure_contour_edges()`.
+- **Room** — ordered list of point UUIDs forming a closed contour, with optional cutouts. `floor_area()` uses Shoelace formula (coordinate-based by default, measurement-based when overrides exist).
+- **Wall** — visual polygon (list of point UUIDs) with RGBA fill color.
+- **Opening** — polygon (list of point UUIDs) with `OpeningKind` (Door or Window with dimensions).
+- **Label** — free text annotation with position, font size, rotation.
 
 ### Key Design Decisions
 
-- **app/ is split into focused files**: `App` struct and `eframe::App` impl live in `app/mod.rs`. UI rendering is split across `canvas.rs` (input), `canvas_draw.rs` (rendering), `toolbar.rs`, `properties_panel.rs`, `services_panel.rs`, etc. All methods are `pub(super)` on `App`.
-- **Coordinates in millimeters**: All model geometry uses `glam::DVec2` for world-space coordinates (mm). Canvas converts to screen pixels via zoom factor. Free functions `distance_to_segment()` and `project_onto_segment()` in `model/wall.rs` replace the old `Point2D` methods.
-- **Wall sides have sections**: Each wall side (`SideData`) tracks T-junctions and auto-computes sections. `add_junction()` deduplicates by t position (within 0.001) to prevent zero-length sections.
-- **OpeningKind enum**: Discriminated union (`Door { height, width }` | `Window { height, width, sill_height, reveal_width }`) — use pattern matching. `target_type()` maps to `TargetObjectType`.
-- **Room detection**: `WallGraph::build()` creates a planar graph from wall endpoints (using shared `merge_endpoints()` with 0.5mm epsilon — topological connectivity only, no spatial proximity merging), force-merges T-junction endpoints with centerline vertices for connectivity, deduplicates parallel adjacency edges, then `find_minimal_cycles()` uses minimum-angle traversal to detect rooms. The outer boundary (largest area) and degenerate micro-cycles (< 0.01 m²) are excluded. A room cycle may include the same wall_id multiple times when T-junctions split it into segments. Detection is version-gated: only runs when `history.version != rooms_version`.
-- **Wall tool chaining**: Two-click wall creation with chain support. `chain_start_snap` preserves the first click's snap across the entire chain so the closing wall can register a T-junction back at the chain origin. `Project::add_wall()` handles T-junction registration at both endpoints.
-- **History (snapshot undo)**: `History` (in `app/history.rs`) stores `VecDeque<(Project, &'static str)>` for both undo and redo stacks. `snapshot()` clones the entire `Project` before mutation. `undo()`/`redo()` swap the whole project. 100-entry cap. `version` counter increments on every snapshot/undo/redo/mark_dirty.
-- **Edit snapshot batching**: `edit_snapshot_version: Option<u64>` on `App` ensures DragValue property edits accumulate into a single undo step. One snapshot is taken when editing starts; reset on selection change or undo/redo.
-- **Project mutation methods**: `Project::add_wall()`, `remove_wall()`, `add_opening()`, `remove_opening()`, `remove_label()`, `move_opening()` consolidate mutation logic (T-junction management, bidirectional wall↔opening links). Canvas calls `history.snapshot()` then these methods. Lookup methods `wall()`, `wall_mut()`, `opening()`, `opening_mut()`, `room()` provide convenient by-ID access.
-- **Services assigned per-object**: `Project.wall_services` is `HashMap<Uuid, WallSideServices>` (per-side, per-section). `opening_services` and `room_services` are `HashMap<Uuid, Vec<AssignedService>>`.
-- **Canvas label scaling**: All canvas label font sizes are multiplied by `App.label_scale` (default 1.0, range 0.5–3.0). Controlled via a slider in the left panel. Affects wall thickness/section labels, room name/area labels, opening previews, and wall preview lengths.
-- **Per-project defaults**: `ProjectDefaults` (stored in `Project.defaults`, `#[serde(default)]` for backward compatibility) holds default dimensions for new walls (thickness, height), doors (height, width), and windows (height, width, sill, reveal). Configured at project creation and editable later via the "Настройки" floating window. `Wall::new()` takes explicit `thickness` and `height` parameters; opening creation constructs `OpeningKind` variants from project defaults.
-- **Wall rendering two-pass**: `draw_walls()` splits into `draw_wall_geometry()` (pass 1: opaque section quads, junction ticks, wall outline) and `draw_wall_overlays()` (pass 2: selection highlights, endpoint circles, text labels). Hub polygons render between the two passes using triangulation (not `convex_polygon`) to handle non-convex hub shapes at multi-wall junctions. `WallScreenGeometry` struct centralizes wall screen-space geometry (start/end, normals, half-thickness, lerp/left_at/right_at methods), replacing duplicated computation across draw functions. Door/window symbol rendering is extracted into `draw_door_symbol()` and `draw_window_symbol()` free functions. Each wall section is an opaque half-width polygon (centerline→edge) — no transparent overlays. Unselected walls use neutral gray fill; selected walls color each section with the shared `SECTION_COLORS` palette (global index across both sides — left sections first, then right — so every section gets a unique color). Section labels are always shown (colored when selected, neutral gray when not). Junction ticks only appear on selected walls.
-- **Wall joints in world space**: `compute_joints()` operates entirely in world-space DVec2 (mm) with 0.5mm merge epsilon. `JointVertices` and `HubPolygon` store `DVec2` vertices. Screen-space conversion happens at render time in `canvas_draw.rs`. For 3+ wall hubs, the miter fallback uses the junction center and angle bisector (instead of naive edge averaging) for correct geometry at unusual angles. The shared `merge_endpoints()` utility (in `editor/endpoint_merge.rs`) consolidates endpoint merging logic used by both `wall_joints.rs` and `room_detection.rs`.
-- **Nested room rendering**: `draw_rooms()` detects nested rooms (room B inside room A) using `point_in_polygon()` centroid test. Outer rooms are triangulated with holes via `earcutr::earcut` with hole indices, so the inner room area is visually cut out. The outer room's displayed area subtracts nested rooms' net areas.
-- **Room metrics guards**: `compute_room_metrics()` uses midpoint fallback for collinear wall intersections and guards against self-intersecting inner polygons (when shoelace area < 10% of gross area, falls back to estimated net area from gross area minus wall volume).
-- **Canvas input decomposition**: `show_canvas()` delegates to `handle_pan_zoom()`, `draw_status_bar()`, `draw_empty_hint()`. `handle_select_tool()` dispatches to `handle_select_click()`, `handle_select_drag()`, `handle_select_keys()`. Hit-testing is extracted into free functions: `find_nearest_wall()`, `find_nearest_opening()`, `find_nearest_label()`.
-- **UI helpers**: `labeled_drag()` and `labeled_value()` in `property_edits.rs` replace repetitive `ui.horizontal(|ui| { ui.label(...); ui.add(DragValue::new(...)); })` patterns across property editors.
-- **Export helpers**: `ExcelFormats` struct consolidates all format definitions. `write_str()`, `write_num()`, `write_header_row()` replace repetitive `.write_*_with_format(...).map_err(...)` calls. `write_rooms_sheet` delegates to `write_rooms_summary()`, `write_room_walls_detail()`, `write_room_windows_detail()`.
+- **Point-first architecture**: Points are the atomic primitives. Rooms, walls, and openings are ordered sets of point UUIDs. Edges connect point pairs and are auto-created when polygons are finalized. Deleting a point cascade-deletes all referencing objects.
+- **Coordinates in millimeters**: All model geometry uses `glam::DVec2` for world-space coordinates (mm). Canvas converts to screen pixels via zoom factor.
+- **Edge overrides**: Each edge has optional `distance_override` and `angle_override`. When set, room area computation switches from coordinate-based Shoelace to measurement-based polygon reconstruction.
+- **OpeningKind enum**: `Door { height, width }` | `Window { height, width, sill_height, reveal_width }` — use pattern matching.
+- **Manual room creation**: Users click existing points to define room contours. No automatic room detection. Cutouts are added via a button in the room properties panel.
+- **Cascade delete**: `remove_point(id)` removes all edges, rooms, walls, and openings referencing that point. `remove_room/wall/opening` only removes the specific object.
+- **Edge deduplication**: `ensure_edge(a, b)` is direction-agnostic — returns existing edge whether stored as (a,b) or (b,a). `find_edge(a, b)` likewise.
+- **History (snapshot undo)**: `History` stores `VecDeque<(Project, &'static str)>` for undo/redo. `snapshot()` clones the entire `Project`. 100-entry cap. `version` counter increments on every mutation.
+- **Edit snapshot batching**: `edit_snapshot_version: Option<u64>` ensures DragValue property edits accumulate into a single undo step per editing session.
+- **Canvas hit-testing**: Priority order (front to back): Points > Labels > Edges > Openings > Walls > Rooms. All hit-testing in world space with screen-pixel thresholds converted via zoom factor.
+- **Polygon tool pattern**: Wall, Door, and Window tools share `handle_polygon_tool()` — click existing points to collect UUIDs, close by clicking first point or pressing Enter, finalize creates the appropriate object.
+- **Visibility modes**: `VisibilityMode::All` (everything), `Wireframe` (points + edges only), `Rooms` (points + rooms, no wall fills).
+- **Canvas label scaling**: All canvas label font sizes multiplied by `App.label_scale` (default 1.0, range 0.5–3.0).
+- **Per-project defaults**: `ProjectDefaults` holds default point height, door/window dimensions. Configured at project creation and editable via "Настройки" window.
+- **Render order** (back to front): Grid → Room fills (earcutr triangulation with cutout holes) → Wall fills → Opening fills → Edges → Points → Measurement labels → Labels → Tool preview.
+- **UI helpers**: `labeled_drag()`, `labeled_value()`, `labeled_drag_override()` in `property_edits.rs` reduce boilerplate in property editors.
 
 ### App Screens
 
 `AppScreen` enum controls top-level navigation:
 - `ProjectList` — startup screen listing saved projects
-- `Editor` — main editor with toolbar, canvas, property panel, floating windows (price list, service picker, project settings)
+- `Editor` — main editor with toolbar, canvas, property panel, project settings floating window
 
-### Quantity Computation
+### Tools
 
-Service quantities (in `model/quantity.rs`) depend on `UnitType`:
-- `Piece` → 1
-- `SquareMeter` → net wall area (m²), reveal area for windows, floor area for rooms
-- `LinearMeter` → wall length (m), door/window perimeter, room inner perimeter
+| Tool | Key | Description |
+|------|-----|-------------|
+| Select | V | Click to select, drag to move points/labels, Delete to remove |
+| Point | P | Click to place point (snap to existing or grid), Shift disables snap |
+| Room | R | Click existing points to build contour, close on first point or Enter |
+| Wall | W | Click existing points to build polygon, creates gray fill |
+| Door | D | Click existing points to build polygon, creates Door opening |
+| Window | O | Click existing points to build polygon, creates Window opening |
+| Label | T | Click to place text label |
+
+### Properties Panel
+
+Selection-dependent editors:
+- **Point**: X/Y position, height, "Used in" references list
+- **Edge**: Distance override with reset, computed distance, angle override, heights, wall area
+- **Room**: Name, floor area, perimeter, point/cutout counts, Add Cutout / Delete buttons
+- **Wall**: Color picker, point count
+- **Opening**: Kind label, dimensions (height/width, sill/reveal for windows), point count
+- **Label**: Text, font size, rotation
 
 ### Persistence
 
 - Projects: `saves/projects/{name}.json`
-- Price lists: `saves/prices/{name}.json`
-- Auto-save every frame when history version changes (compared via `last_saved_version`)
+- Auto-save every frame when history version changes
+- Old project files (pre-redesign) are incompatible — users must create new projects
 
 ## Conventions
 
 - All dimensions are in millimeters internally; display converts to m/m² where needed
-- Wall defaults: thickness 200mm, height 2700mm (configurable per-project via `ProjectDefaults`)
-- Door defaults: 2100×900mm (configurable per-project via `ProjectDefaults`)
-- Window defaults: 1400×1200mm, sill 900mm, reveal 250mm (configurable per-project via `ProjectDefaults`)
-- Wall area uses trapezoid formula: `length × (height_start + height_end) / 2`
-- Window reveal perimeter: `2×height + 2×width` (all 4 sides)
-- Door perimeter: `2×height + width` (no threshold)
+- Point height default: 2700mm (configurable per-project via `ProjectDefaults`)
+- Door defaults: 2100×900mm (configurable per-project)
+- Window defaults: 1400×1200mm, sill 900mm, reveal 250mm (configurable per-project)
+- Wall area per edge: `distance × (height_a + height_b) / 2`
+- Room area: Shoelace formula on point coordinates (or measurement-based reconstruction when overrides exist)
+- Room perimeter: sum of edge distances around contour

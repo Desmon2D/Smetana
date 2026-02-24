@@ -1,46 +1,76 @@
 use eframe::egui;
 
-use crate::editor::EditorTool;
-use crate::export::export_to_xlsx;
-use crate::model::ProjectDefaults;
 use super::{App, AppScreen};
+use crate::editor::{Selection, Tool, VisibilityMode};
+use crate::model::ProjectDefaults;
 
 pub(super) fn show_defaults_form(ui: &mut egui::Ui, defaults: &mut ProjectDefaults) {
-    ui.label("Стена:");
-    egui::Grid::new("defaults_wall").num_columns(2).show(ui, |ui| {
-        ui.label("Толщина (мм):");
-        ui.add(egui::DragValue::new(&mut defaults.wall_thickness).range(50.0..=1000.0).speed(10.0));
-        ui.end_row();
-        ui.label("Высота (мм):");
-        ui.add(egui::DragValue::new(&mut defaults.wall_height).range(1000.0..=10000.0).speed(10.0));
-        ui.end_row();
-    });
+    ui.label("Точка:");
+    egui::Grid::new("defaults_point")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Высота (мм):");
+            ui.add(
+                egui::DragValue::new(&mut defaults.point_height)
+                    .range(1000.0..=10000.0)
+                    .speed(10.0),
+            );
+            ui.end_row();
+        });
     ui.add_space(4.0);
     ui.label("Дверь:");
-    egui::Grid::new("defaults_door").num_columns(2).show(ui, |ui| {
-        ui.label("Высота (мм):");
-        ui.add(egui::DragValue::new(&mut defaults.door_height).range(500.0..=5000.0).speed(10.0));
-        ui.end_row();
-        ui.label("Ширина (мм):");
-        ui.add(egui::DragValue::new(&mut defaults.door_width).range(300.0..=3000.0).speed(10.0));
-        ui.end_row();
-    });
+    egui::Grid::new("defaults_door")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Высота (мм):");
+            ui.add(
+                egui::DragValue::new(&mut defaults.door_height)
+                    .range(500.0..=5000.0)
+                    .speed(10.0),
+            );
+            ui.end_row();
+            ui.label("Ширина (мм):");
+            ui.add(
+                egui::DragValue::new(&mut defaults.door_width)
+                    .range(300.0..=3000.0)
+                    .speed(10.0),
+            );
+            ui.end_row();
+        });
     ui.add_space(4.0);
     ui.label("Окно:");
-    egui::Grid::new("defaults_window").num_columns(2).show(ui, |ui| {
-        ui.label("Высота (мм):");
-        ui.add(egui::DragValue::new(&mut defaults.window_height).range(200.0..=5000.0).speed(10.0));
-        ui.end_row();
-        ui.label("Ширина (мм):");
-        ui.add(egui::DragValue::new(&mut defaults.window_width).range(200.0..=5000.0).speed(10.0));
-        ui.end_row();
-        ui.label("Высота подоконника (мм):");
-        ui.add(egui::DragValue::new(&mut defaults.window_sill_height).range(0.0..=5000.0).speed(10.0));
-        ui.end_row();
-        ui.label("Ширина откоса (мм):");
-        ui.add(egui::DragValue::new(&mut defaults.window_reveal_width).range(0.0..=1000.0).speed(10.0));
-        ui.end_row();
-    });
+    egui::Grid::new("defaults_window")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Высота (мм):");
+            ui.add(
+                egui::DragValue::new(&mut defaults.window_height)
+                    .range(200.0..=5000.0)
+                    .speed(10.0),
+            );
+            ui.end_row();
+            ui.label("Ширина (мм):");
+            ui.add(
+                egui::DragValue::new(&mut defaults.window_width)
+                    .range(200.0..=5000.0)
+                    .speed(10.0),
+            );
+            ui.end_row();
+            ui.label("Высота подоконника (мм):");
+            ui.add(
+                egui::DragValue::new(&mut defaults.window_sill_height)
+                    .range(0.0..=5000.0)
+                    .speed(10.0),
+            );
+            ui.end_row();
+            ui.label("Ширина откоса (мм):");
+            ui.add(
+                egui::DragValue::new(&mut defaults.window_reveal_width)
+                    .range(0.0..=1000.0)
+                    .speed(10.0),
+            );
+            ui.end_row();
+        });
 }
 
 impl App {
@@ -74,15 +104,19 @@ impl App {
         ctx.input(|i| {
             if !i.modifiers.ctrl && !i.modifiers.alt {
                 if i.key_pressed(egui::Key::V) {
-                    self.set_tool(EditorTool::Select);
+                    self.set_tool(Tool::Select);
+                } else if i.key_pressed(egui::Key::P) {
+                    self.set_tool(Tool::Point);
+                } else if i.key_pressed(egui::Key::R) {
+                    self.set_tool(Tool::Room);
                 } else if i.key_pressed(egui::Key::W) {
-                    self.set_tool(EditorTool::Wall);
+                    self.set_tool(Tool::Wall);
                 } else if i.key_pressed(egui::Key::D) {
-                    self.set_tool(EditorTool::Door);
+                    self.set_tool(Tool::Door);
                 } else if i.key_pressed(egui::Key::O) {
-                    self.set_tool(EditorTool::Window);
+                    self.set_tool(Tool::Window);
                 } else if i.key_pressed(egui::Key::T) {
-                    self.set_tool(EditorTool::Label);
+                    self.set_tool(Tool::Label);
                 }
             }
         });
@@ -93,16 +127,21 @@ impl App {
             ui.horizontal(|ui| {
                 ui.label("Инструмент:");
 
-                let prev_tool = self.editor.active_tool;
                 let tool = &mut self.editor.active_tool;
-                ui.selectable_value(tool, EditorTool::Select, "Выбор (V)");
-                ui.selectable_value(tool, EditorTool::Wall, "Стена (W)");
-                ui.selectable_value(tool, EditorTool::Door, "Дверь (D)");
-                ui.selectable_value(tool, EditorTool::Window, "Окно (O)");
-                ui.selectable_value(tool, EditorTool::Label, "Подпись (T)");
+                let prev_tool = *tool;
+                ui.selectable_value(tool, Tool::Select, "Выбор (V)");
+                ui.selectable_value(tool, Tool::Point, "Точка (P)");
+                ui.selectable_value(tool, Tool::Room, "Комната (R)");
+                ui.selectable_value(tool, Tool::Wall, "Стена (W)");
+                ui.selectable_value(tool, Tool::Door, "Дверь (D)");
+                ui.selectable_value(tool, Tool::Window, "Окно (O)");
+                ui.selectable_value(tool, Tool::Label, "Подпись (T)");
 
-                if prev_tool == EditorTool::Wall && self.editor.active_tool != EditorTool::Wall {
-                    self.editor.wall_tool.reset();
+                // Clear tool states on toolbar switch
+                if *tool != prev_tool {
+                    self.editor.room_tool.points.clear();
+                    self.editor.room_tool.building_cutout = false;
+                    self.editor.polygon_tool.points.clear();
                 }
 
                 ui.separator();
@@ -135,34 +174,8 @@ impl App {
                     self.save_current_project();
                 }
 
-                let can_report = !self.has_validation_errors();
-                if ui
-                    .add_enabled(can_report, egui::Button::new("Сформировать отчёт"))
-                    .clicked()
-                {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .set_title("Сохранить отчёт")
-                        .add_filter("Excel", &["xlsx"])
-                        .set_file_name(&format!("{}.xlsx", self.project.name))
-                        .save_file()
-                    {
-                        match export_to_xlsx(&self.project, &self.price_list, &path) {
-                            Ok(()) => {
-                                self.status_message =
-                                    Some(format!("Отчёт сохранён: {}", path.display()));
-                            }
-                            Err(e) => {
-                                self.status_message = Some(format!("Ошибка: {e}"));
-                            }
-                        }
-                    }
-                }
-
                 ui.separator();
 
-                if ui.button("Услуги").clicked() {
-                    self.show_price_list_window = !self.show_price_list_window;
-                }
                 if ui.button("Настройки").clicked() {
                     self.show_project_settings = !self.show_project_settings;
                 }
@@ -194,7 +207,10 @@ impl App {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         let name_ok = !self.new_project_name.trim().is_empty();
-                        if ui.add_enabled(name_ok, egui::Button::new("Создать")).clicked() {
+                        if ui
+                            .add_enabled(name_ok, egui::Button::new("Создать"))
+                            .clicked()
+                        {
                             let name = self.new_project_name.trim().to_string();
                             let defaults = self.new_project_defaults.clone();
                             self.new_project_name.clear();
@@ -218,12 +234,20 @@ impl App {
     }
 
     pub(super) fn show_left_panel(&mut self, ctx: &egui::Context) {
-        use crate::editor::Selection;
-
         egui::SidePanel::left("left_panel")
             .default_width(200.0)
             .show(ctx, |ui| {
                 ui.heading("Структура проекта");
+                ui.separator();
+
+                // Visibility mode toggle
+                ui.horizontal(|ui| {
+                    ui.label("Режим:");
+                    let vis = &mut self.editor.visibility;
+                    ui.selectable_value(vis, VisibilityMode::All, "Всё");
+                    ui.selectable_value(vis, VisibilityMode::Rooms, "Комнаты");
+                    ui.selectable_value(vis, VisibilityMode::Wireframe, "Каркас");
+                });
                 ui.separator();
 
                 ui.horizontal(|ui| {
@@ -233,10 +257,14 @@ impl App {
                 ui.separator();
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
+                    // Object counts
+                    ui.label(format!("Точек: {}", self.project.points.len()));
+                    ui.label(format!("Рёбер: {}", self.project.edges.len()));
                     ui.label(format!("Стен: {}", self.project.walls.len()));
                     ui.label(format!("Проёмов: {}", self.project.openings.len()));
                     ui.label(format!("Подписей: {}", self.project.labels.len()));
 
+                    // Rooms list
                     ui.add_space(8.0);
                     ui.separator();
                     ui.label(format!("Комнаты ({})", self.project.rooms.len()));
@@ -260,6 +288,7 @@ impl App {
                         self.editor.selection = Selection::Room(id);
                     }
 
+                    // Labels list
                     if !self.project.labels.is_empty() {
                         ui.add_space(8.0);
                         ui.separator();

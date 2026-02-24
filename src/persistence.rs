@@ -2,10 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::model::{PriceList, Project};
+use crate::model::Project;
 
 const PROJECTS_DIR: &str = "saves/projects";
-const PRICES_DIR: &str = "saves/prices";
 
 // --- Project I/O ---
 
@@ -16,12 +15,10 @@ pub struct ProjectEntry {
     pub modified: SystemTime,
 }
 
-/// Ensure both save directories exist.
+/// Ensure save directories exist.
 pub fn ensure_saves_dirs() -> Result<(), String> {
     fs::create_dir_all(PROJECTS_DIR)
         .map_err(|e| format!("Не удалось создать каталог проектов: {e}"))?;
-    fs::create_dir_all(PRICES_DIR)
-        .map_err(|e| format!("Не удалось создать каталог прайс-листов: {e}"))?;
     Ok(())
 }
 
@@ -34,8 +31,8 @@ pub fn project_path(name: &str) -> PathBuf {
 pub fn save_project(project: &Project) -> Result<PathBuf, String> {
     ensure_saves_dirs()?;
     let path = project_path(&project.name);
-    let json = serde_json::to_string_pretty(project)
-        .map_err(|e| format!("Ошибка сериализации: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(project).map_err(|e| format!("Ошибка сериализации: {e}"))?;
     fs::write(&path, &json).map_err(|e| format!("Ошибка записи файла: {e}"))?;
     Ok(path)
 }
@@ -43,22 +40,15 @@ pub fn save_project(project: &Project) -> Result<PathBuf, String> {
 /// Load a project from a JSON file.
 pub fn load_project(path: &Path) -> Result<Project, String> {
     let json = fs::read_to_string(path).map_err(|e| format!("Ошибка чтения файла: {e}"))?;
-    let mut project: Project =
+    let project: Project =
         serde_json::from_str(&json).map_err(|e| format!("Ошибка десериализации: {e}"))?;
-    // Post-deserialization fixup: ensure all wall sides have sections
-    // (old saves may have empty sections vec).
-    for wall in &mut project.walls {
-        wall.left_side.ensure_sections();
-        wall.right_side.ensure_sections();
-    }
     Ok(project)
 }
 
 /// List all project JSON files in the saves directory.
 pub fn list_projects() -> Result<Vec<PathBuf>, String> {
     ensure_saves_dirs()?;
-    let entries =
-        fs::read_dir(PROJECTS_DIR).map_err(|e| format!("Ошибка чтения каталога: {e}"))?;
+    let entries = fs::read_dir(PROJECTS_DIR).map_err(|e| format!("Ошибка чтения каталога: {e}"))?;
     let mut paths: Vec<PathBuf> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -96,102 +86,110 @@ pub fn delete_project(path: &Path) -> Result<(), String> {
     fs::remove_file(path).map_err(|e| format!("Ошибка удаления: {e}"))
 }
 
-// --- Price List I/O ---
-
-/// Build the file path for a price list by name.
-pub fn price_path(name: &str) -> PathBuf {
-    Path::new(PRICES_DIR).join(format!("{name}.json"))
-}
-
-/// Save a price list to `saves/prices/{name}.json`.
-pub fn save_price_list(price_list: &PriceList) -> Result<PathBuf, String> {
-    ensure_saves_dirs()?;
-    let path = price_path(&price_list.name);
-    let json = serde_json::to_string_pretty(price_list)
-        .map_err(|e| format!("Ошибка сериализации прайс-листа: {e}"))?;
-    fs::write(&path, &json).map_err(|e| format!("Ошибка записи файла: {e}"))?;
-    Ok(path)
-}
-
-/// Save a price list to an arbitrary path.
-pub fn save_price_list_to(price_list: &PriceList, path: &Path) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(price_list)
-        .map_err(|e| format!("Ошибка сериализации прайс-листа: {e}"))?;
-    fs::write(path, &json).map_err(|e| format!("Ошибка записи файла: {e}"))?;
-    Ok(())
-}
-
-/// Load a price list from a JSON file.
-pub fn load_price_list(path: &Path) -> Result<PriceList, String> {
-    let json =
-        fs::read_to_string(path).map_err(|e| format!("Ошибка чтения файла: {e}"))?;
-    serde_json::from_str(&json).map_err(|e| format!("Ошибка десериализации прайс-листа: {e}"))
-}
-
-// --- Tests ---
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::*;
     use glam::DVec2;
-    use crate::model::{Wall, ServiceTemplate, TargetObjectType, UnitType};
-    use std::fs;
+    use uuid::Uuid;
 
     #[test]
-    fn round_trip_project_with_wall() {
-        let mut project = Project::new("_test_round_trip".to_string());
-        project.walls.push(Wall::new(
+    fn round_trip_project() {
+        // Create a project with all object types
+        let mut project = Project::new("test_round_trip".to_string());
+
+        // Add 4 points
+        let ids: Vec<Uuid> = (0..4).map(|_| Uuid::new_v4()).collect();
+        let positions = [
             DVec2::new(0.0, 0.0),
-            DVec2::new(4000.0, 0.0),
-            200.0,
-            2700.0,
-        ));
+            DVec2::new(3000.0, 0.0),
+            DVec2::new(3000.0, 4000.0),
+            DVec2::new(0.0, 4000.0),
+        ];
+        for (i, &id) in ids.iter().enumerate() {
+            project.points.push(Point {
+                id,
+                position: positions[i],
+                height: 2700.0,
+            });
+        }
+
+        // Ensure edges for the contour
+        project.ensure_contour_edges(&ids);
+        assert_eq!(project.edges.len(), 4);
+
+        // Add a room
+        let room = Room::new("Кухня".to_string(), ids.clone());
+        let room_id = room.id;
+        project.rooms.push(room);
+
+        // Add a wall
+        let wall = Wall::new(ids.clone());
+        let wall_id = wall.id;
+        project.walls.push(wall);
+
+        // Add an opening (door)
+        let opening = Opening::new(
+            vec![ids[0], ids[1]],
+            OpeningKind::Door {
+                height: 2100.0,
+                width: 900.0,
+            },
+        );
+        let opening_id = opening.id;
+        project.openings.push(opening);
+
+        // Add a label
+        let label = Label::new("Test Label".to_string(), DVec2::new(1500.0, 2000.0));
+        let label_id = label.id;
+        project.labels.push(label);
+
+        // Set an edge distance override
+        project.edges[0].distance_override = Some(3200.0);
 
         // Save
         let path = save_project(&project).expect("save failed");
-        assert!(path.exists());
 
         // Load
         let loaded = load_project(&path).expect("load failed");
-        assert_eq!(loaded.id, project.id);
-        assert_eq!(loaded.name, project.name);
+
+        // Verify
+        assert_eq!(loaded.name, "test_round_trip");
+        assert_eq!(loaded.points.len(), 4);
+        assert_eq!(loaded.edges.len(), 4);
+        assert_eq!(loaded.rooms.len(), 1);
         assert_eq!(loaded.walls.len(), 1);
-        assert_eq!(loaded.walls[0].id, project.walls[0].id);
-        assert_eq!(loaded.walls[0].start.x, 0.0);
-        assert_eq!(loaded.walls[0].end.x, 4000.0);
-        assert_eq!(loaded.walls[0].thickness, 200.0);
-        assert_eq!(loaded.walls[0].left_side.height_start, 2700.0);
+        assert_eq!(loaded.openings.len(), 1);
+        assert_eq!(loaded.labels.len(), 1);
+
+        // Verify specific fields
+        let loaded_room = loaded.room(room_id).expect("room not found");
+        assert_eq!(loaded_room.name, "Кухня");
+        assert_eq!(loaded_room.points.len(), 4);
+
+        let loaded_wall = loaded.wall(wall_id).expect("wall not found");
+        assert_eq!(loaded_wall.points.len(), 4);
+        assert_eq!(loaded_wall.color, [180, 180, 180, 255]);
+
+        let loaded_opening = loaded.opening(opening_id).expect("opening not found");
+        assert!(
+            matches!(loaded_opening.kind, OpeningKind::Door { height, width } if height == 2100.0 && width == 900.0)
+        );
+
+        let loaded_label = loaded
+            .labels
+            .iter()
+            .find(|l| l.id == label_id)
+            .expect("label not found");
+        assert_eq!(loaded_label.text, "Test Label");
+
+        // Verify edge override
+        assert_eq!(loaded.edges[0].distance_override, Some(3200.0));
+
+        // Verify defaults round-trip
+        assert_eq!(loaded.defaults.point_height, 2700.0);
 
         // Cleanup
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn round_trip_price_list() {
-        let mut pl = PriceList::new("_test_prices".to_string());
-        pl.services.push(ServiceTemplate::new(
-            "Штукатурка стен".to_string(),
-            UnitType::SquareMeter,
-            450.0,
-            TargetObjectType::Wall,
-        ));
-        pl.services.push(ServiceTemplate::new(
-            "Установка двери".to_string(),
-            UnitType::Piece,
-            3500.0,
-            TargetObjectType::Door,
-        ));
-
-        let path = save_price_list(&pl).expect("save failed");
-        assert!(path.exists());
-
-        let loaded = load_price_list(&path).expect("load failed");
-        assert_eq!(loaded.id, pl.id);
-        assert_eq!(loaded.name, pl.name);
-        assert_eq!(loaded.services.len(), 2);
-        assert_eq!(loaded.services[0].name, "Штукатурка стен");
-        assert_eq!(loaded.services[1].price_per_unit, 3500.0);
-
         let _ = fs::remove_file(&path);
     }
 }

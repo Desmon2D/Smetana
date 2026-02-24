@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
 use crate::model::Project;
+use std::collections::VecDeque;
 
 pub struct History {
     undo_stack: VecDeque<(Project, &'static str)>,
@@ -51,8 +51,12 @@ impl History {
         }
     }
 
-    pub fn can_undo(&self) -> bool { !self.undo_stack.is_empty() }
-    pub fn can_redo(&self) -> bool { !self.redo_stack.is_empty() }
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
 
     /// Bump version without storing a snapshot. For non-undoable state changes.
     pub fn mark_dirty(&mut self) {

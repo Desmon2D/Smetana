@@ -1,16 +1,13 @@
-pub mod wall;
+pub mod edge;
 pub mod opening;
-pub mod room;
-pub mod label;
+pub mod point;
 pub mod project;
-pub mod price;
-pub mod quantity;
-pub mod room_metrics;
+pub mod room;
+pub mod wall;
 
-pub use wall::*;
+pub use edge::*;
 pub use opening::*;
-pub use room::*;
-pub use label::*;
+pub use point::*;
 pub use project::*;
-pub use price::*;
-pub use quantity::*;
+pub use room::*;
+pub use wall::*;

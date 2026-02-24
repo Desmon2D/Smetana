@@ -44,7 +44,11 @@ impl Canvas {
     }
 
     /// Convert screen coordinates to world coordinates as a `DVec2` (mm).
-    pub fn screen_to_world_dvec2(&self, screen: egui::Pos2, rect_center: egui::Pos2) -> glam::DVec2 {
+    pub fn screen_to_world_dvec2(
+        &self,
+        screen: egui::Pos2,
+        rect_center: egui::Pos2,
+    ) -> glam::DVec2 {
         let p = self.screen_to_world(screen, rect_center);
         glam::DVec2::new(p.x as f64, p.y as f64)
     }

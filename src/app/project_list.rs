@@ -1,13 +1,43 @@
 use eframe::egui;
 
-use crate::model::ProjectDefaults;
-use crate::persistence::delete_project;
 use super::App;
 use super::toolbar::show_defaults_form;
+use crate::model::ProjectDefaults;
+use crate::persistence::delete_project;
 
 fn format_system_time(t: std::time::SystemTime) -> String {
-    let dt: chrono::DateTime<chrono::Local> = t.into();
-    dt.format("%d.%m.%Y %H:%M").to_string()
+    match t.duration_since(std::time::SystemTime::UNIX_EPOCH) {
+        Ok(dur) => {
+            let secs = dur.as_secs();
+            let days = secs / 86400;
+            let time_of_day = secs % 86400;
+            let hours = time_of_day / 3600;
+            let minutes = (time_of_day % 3600) / 60;
+
+            // Simple date calculation from days since epoch
+            let (year, month, day) = days_to_ymd(days);
+            format!(
+                "{:02}.{:02}.{} {:02}:{:02}",
+                day, month, year, hours, minutes
+            )
+        }
+        Err(_) => "—".to_string(),
+    }
+}
+
+fn days_to_ymd(days_since_epoch: u64) -> (u64, u64, u64) {
+    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
+    let z = days_since_epoch + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
 }
 
 impl App {
@@ -32,7 +62,6 @@ impl App {
                     self.new_project_name.clear();
                     self.new_project_defaults = ProjectDefaults::default();
                     self.create_new_project(name, defaults);
-                    return;
                 }
             });
 
@@ -70,10 +99,7 @@ impl App {
                         for (i, entry) in self.project_entries.iter().enumerate() {
                             let is_selected = self.project_list_selection == Some(i);
 
-                            if ui
-                                .selectable_label(is_selected, &entry.name)
-                                .clicked()
-                            {
+                            if ui.selectable_label(is_selected, &entry.name).clicked() {
                                 self.project_list_selection = Some(i);
                             }
 
@@ -99,11 +125,11 @@ impl App {
                     });
             });
 
-            if let Some(sel) = self.project_list_selection {
-                if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    let path = self.project_entries[sel].path.clone();
-                    self.open_project_from_path(&path);
-                }
+            if let Some(sel) = self.project_list_selection
+                && ctx.input(|i| i.key_pressed(egui::Key::Enter))
+            {
+                let path = self.project_entries[sel].path.clone();
+                self.open_project_from_path(&path);
             }
 
             if let Some(del_idx) = self.confirm_delete {

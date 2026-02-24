@@ -1,23 +1,17 @@
 pub mod canvas;
-pub mod endpoint_merge;
-pub mod room_detection;
 pub mod snap;
-pub mod wall_joints;
-pub mod wall_tool;
 
 pub use canvas::Canvas;
-pub use room_detection::WallGraph;
-pub use snap::{SnapResult, SnapType, snap};
-pub use wall_tool::{WallTool, WallToolState};
+pub use snap::{snap, snap_to_point};
 
-use std::collections::HashMap;
-use glam::DVec2;
 use uuid::Uuid;
 
 /// The currently active drawing/editing tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EditorTool {
+pub enum Tool {
     Select,
+    Point,
+    Room,
     Wall,
     Door,
     Window,
@@ -28,52 +22,74 @@ pub enum EditorTool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Selection {
     None,
-    Wall(Uuid),
+    Point(Uuid),
+    Edge(Uuid),
     Opening(Uuid),
+    Wall(Uuid),
     Room(Uuid),
     Label(Uuid),
 }
 
-/// State for the opening (door/window) placement tool.
-///
-/// Tracks the wall the cursor is currently hovering over
-/// and the computed offset along that wall, used for preview rendering.
-pub struct OpeningTool {
-    /// Wall ID the cursor is currently over (for preview).
-    pub hover_wall_id: Option<Uuid>,
-    /// Offset along the hovered wall in mm (for preview).
-    pub hover_offset: f64,
+/// State for the Room tool: collecting points for a contour.
+#[derive(Default)]
+pub struct RoomToolState {
+    /// Points collected so far for the room contour.
+    pub points: Vec<Uuid>,
+    /// Whether we are building a cutout (after room is created).
+    pub building_cutout: bool,
 }
 
-impl Default for OpeningTool {
-    fn default() -> Self {
-        Self {
-            hover_wall_id: None,
-            hover_offset: 0.0,
-        }
+/// State for polygon-based tools (Wall, Door, Window): collecting points.
+#[derive(Default)]
+pub struct PolygonToolState {
+    /// Points collected so far for the polygon.
+    pub points: Vec<Uuid>,
+}
+
+/// Visibility modes controlling which geometry layers are rendered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisibilityMode {
+    /// Everything visible.
+    All,
+    /// Only points and edges (wireframe).
+    Wireframe,
+    /// Points and rooms (no wall fills).
+    Rooms,
+}
+
+impl VisibilityMode {
+    pub fn show_room_fills(&self) -> bool {
+        matches!(self, Self::All | Self::Rooms)
+    }
+
+    pub fn show_wall_fills(&self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    pub fn show_opening_fills(&self) -> bool {
+        matches!(self, Self::All)
     }
 }
 
-/// Editor state: active tool, selection, and canvas viewport.
+/// Editor state: active tool, selection, canvas viewport, and tool states.
 pub struct EditorState {
-    pub active_tool: EditorTool,
+    pub active_tool: Tool,
     pub selection: Selection,
     pub canvas: Canvas,
-    pub wall_tool: WallTool,
-    pub opening_tool: OpeningTool,
-    /// Transient: world position for openings with wall_id=None (orphaned or dragged off).
-    pub orphan_positions: HashMap<Uuid, DVec2>,
+    pub room_tool: RoomToolState,
+    pub polygon_tool: PolygonToolState,
+    pub visibility: VisibilityMode,
 }
 
 impl Default for EditorState {
     fn default() -> Self {
         Self {
-            active_tool: EditorTool::Select,
+            active_tool: Tool::Select,
             selection: Selection::None,
             canvas: Canvas::default(),
-            wall_tool: WallTool::default(),
-            opening_tool: OpeningTool::default(),
-            orphan_positions: HashMap::new(),
+            room_tool: RoomToolState::default(),
+            polygon_tool: PolygonToolState::default(),
+            visibility: VisibilityMode::All,
         }
     }
 }
