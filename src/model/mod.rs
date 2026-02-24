@@ -5,6 +5,7 @@ pub mod label;
 pub mod project;
 pub mod price;
 pub mod quantity;
+pub mod room_metrics;
 
 pub use wall::*;
 pub use opening::*;

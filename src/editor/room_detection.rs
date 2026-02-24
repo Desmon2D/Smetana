@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use glam::DVec2;
 use uuid::Uuid;
 
+use crate::editor::endpoint_merge::merge_endpoints;
 use crate::model::{Room, Wall, WallSide};
 
 /// Tolerance for merging vertices (in mm).
@@ -37,7 +38,19 @@ impl WallGraph {
         }
 
         // Step 1+2: Collect and merge vertices (including junction points)
+        // Use the shared merge_endpoints utility for initial start/end merging.
+        let endpoint_groups = merge_endpoints(walls, MERGE_EPSILON);
+
         let mut positions: Vec<DVec2> = Vec::new();
+        let mut endpoint_index: HashMap<(Uuid, bool), usize> = HashMap::new();
+
+        for (pos, members) in &endpoint_groups {
+            let idx = positions.len();
+            positions.push(*pos);
+            for &(wall_id, is_end) in members {
+                endpoint_index.insert((wall_id, is_end), idx);
+            }
+        }
 
         // For each wall, collect all vertices along its length:
         // start, junction points (sorted by t), end.
@@ -45,7 +58,7 @@ impl WallGraph {
         let mut wall_vertices: Vec<(Uuid, Vec<usize>)> = Vec::new();
 
         for wall in walls {
-            let start_idx = find_or_insert_vertex(&mut positions, wall.start);
+            let start_idx = endpoint_index[&(wall.id, false)];
 
             // Collect all junction t values from both sides
             let mut junction_ts: Vec<f64> = Vec::new();
@@ -68,7 +81,7 @@ impl WallGraph {
                 verts.push(idx);
             }
 
-            let end_idx = find_or_insert_vertex(&mut positions, wall.end);
+            let end_idx = endpoint_index[&(wall.id, true)];
             verts.push(end_idx);
 
             wall_vertices.push((wall.id, verts));

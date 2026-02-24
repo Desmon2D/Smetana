@@ -1,9 +1,115 @@
 use eframe::egui;
+use glam::DVec2;
 
-use crate::editor::{EditorTool, Selection, SnapType, WallToolState};
+use crate::editor::{Canvas, EditorTool, Selection, SnapType, WallToolState};
 use crate::editor::wall_joints::compute_joints;
-use crate::model::OpeningKind;
+use crate::model::{OpeningKind, Wall};
 use super::{App, SECTION_COLORS};
+
+/// Convert a world-space DVec2 (mm) to screen-space Pos2 via the canvas.
+fn world_to_screen(canvas: &Canvas, center: egui::Pos2, p: DVec2) -> egui::Pos2 {
+    canvas.world_to_screen(egui::pos2(p.x as f32, p.y as f32), center)
+}
+
+// ---------------------------------------------------------------------------
+// WallScreenGeometry — shared screen-space representation of a wall
+// ---------------------------------------------------------------------------
+
+/// Pre-computed screen-space geometry for a wall, used by draw_walls,
+/// draw_openings, and draw_opening_preview to avoid duplicating the same
+/// world-to-screen and normal calculations.
+struct WallScreenGeometry {
+    start: egui::Pos2,
+    end: egui::Pos2,
+    dx: f32,
+    dy: f32,
+    len: f32,
+    half_thick: f32,
+    nx: f32,
+    ny: f32,
+    angle: f32,
+}
+
+impl WallScreenGeometry {
+    /// Build screen geometry for a wall. Returns `None` if the wall is too
+    /// short to render (screen length < 0.1 px).
+    fn from_wall(wall: &Wall, canvas: &Canvas, center: egui::Pos2) -> Option<Self> {
+        let start = canvas.world_to_screen(
+            egui::pos2(wall.start.x as f32, wall.start.y as f32),
+            center,
+        );
+        let end = canvas.world_to_screen(
+            egui::pos2(wall.end.x as f32, wall.end.y as f32),
+            center,
+        );
+        let dx = end.x - start.x;
+        let dy = end.y - start.y;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 0.1 {
+            return None;
+        }
+        let half_thick = (wall.thickness as f32 * canvas.zoom) / 2.0;
+        let nx = -dy / len * half_thick;
+        let ny = dx / len * half_thick;
+        let angle = dy.atan2(dx);
+        Some(Self { start, end, dx, dy, len, half_thick, nx, ny, angle })
+    }
+
+    /// Interpolate a point along the wall centerline at parameter `t` in [0, 1].
+    fn lerp(&self, t: f32) -> egui::Pos2 {
+        egui::pos2(
+            self.start.x + self.dx * t,
+            self.start.y + self.dy * t,
+        )
+    }
+
+    /// Point on the left edge (positive normal side) at parameter `t`.
+    fn left_at(&self, t: f32) -> egui::Pos2 {
+        let c = self.lerp(t);
+        egui::pos2(c.x + self.nx, c.y + self.ny)
+    }
+
+    /// Point on the right edge (negative normal side) at parameter `t`.
+    fn right_at(&self, t: f32) -> egui::Pos2 {
+        let c = self.lerp(t);
+        egui::pos2(c.x - self.nx, c.y - self.ny)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WallOverlay / SectionLabel — module-level data collected during pass 1
+// ---------------------------------------------------------------------------
+
+struct WallOverlay {
+    is_selected: bool,
+    corners: [egui::Pos2; 4],
+    start_screen: egui::Pos2,
+    end_screen: egui::Pos2,
+    wall_angle: f32,
+    len: f32,
+    thickness_mm: f64,
+}
+
+struct SectionLabel {
+    pos: egui::Pos2,
+    text: String,
+    color: egui::Color32,
+    wall_angle: f32,
+}
+
+// ---------------------------------------------------------------------------
+// Helper: compute section boundary t-values for a wall side
+// ---------------------------------------------------------------------------
+
+fn wall_section_boundaries(side: &crate::model::SideData) -> Vec<f32> {
+    let mut boundaries = Vec::with_capacity(side.junctions.len() + 2);
+    boundaries.push(0.0_f32);
+    for j in &side.junctions {
+        boundaries.push(j.t as f32);
+    }
+    boundaries.push(1.0);
+    boundaries
+}
 
 /// Draw text centered at `center_pos`, rotated to follow the wall angle.
 /// The angle is automatically flipped so text is never upside-down.
@@ -28,12 +134,6 @@ fn paint_rotated_text(
     let w = galley.size().x;
     let h = galley.size().y;
 
-    // TextShape rotates clockwise around `pos` (the upper-left corner).
-    // egui's Rot2 applies: x' = c*x - s*y, y' = s*x + c*y
-    // The local center at (w/2, h/2) after rotation lands at:
-    //   offset_x = cos(θ)*w/2 - sin(θ)*h/2
-    //   offset_y = sin(θ)*w/2 + cos(θ)*h/2
-    // Set pos so that galley_pos + offset = center_pos.
     let (sin_a, cos_a) = angle.sin_cos();
     let offset_x = cos_a * (w / 2.0) - sin_a * (h / 2.0);
     let offset_y = sin_a * (w / 2.0) + cos_a * (h / 2.0);
@@ -44,23 +144,154 @@ fn paint_rotated_text(
     painter.add(text_shape);
 }
 
+// ---------------------------------------------------------------------------
+// Door / Window symbol rendering (extracted from draw_openings)
+// ---------------------------------------------------------------------------
+
+/// Draw a door symbol: a straight line from p_left to p_right plus a 90-degree
+/// swing arc.
+fn draw_door_symbol(
+    painter: &egui::Painter,
+    p_left: egui::Pos2,
+    p_right: egui::Pos2,
+    _nx: f32,
+    _ny: f32,
+    is_selected: bool,
+) {
+    let color = if is_selected {
+        egui::Color32::from_rgb(240, 180, 80)
+    } else {
+        egui::Color32::from_rgb(180, 120, 60)
+    };
+    let stroke_w = if is_selected { 2.0 } else { 1.5 };
+
+    painter.line_segment(
+        [p_left, p_right],
+        egui::Stroke::new(stroke_w, color),
+    );
+
+    let arc_r = ((p_right.x - p_left.x).powi(2)
+        + (p_right.y - p_left.y).powi(2))
+    .sqrt();
+    if arc_r > 1.0 {
+        let ux = (p_right.x - p_left.x) / arc_r;
+        let uy = (p_right.y - p_left.y) / arc_r;
+        let px = -uy;
+        let py = ux;
+
+        let n_seg = 16;
+        let mut pts = Vec::with_capacity(n_seg + 1);
+        for i in 0..=n_seg {
+            let a = (i as f32 / n_seg as f32) * std::f32::consts::FRAC_PI_2;
+            let d_x = ux * a.cos() + px * a.sin();
+            let d_y = uy * a.cos() + py * a.sin();
+            pts.push(egui::pos2(
+                p_left.x + d_x * arc_r,
+                p_left.y + d_y * arc_r,
+            ));
+        }
+        for i in 0..n_seg {
+            painter.line_segment(
+                [pts[i], pts[i + 1]],
+                egui::Stroke::new(stroke_w, color),
+            );
+        }
+    }
+}
+
+/// Draw a window symbol: two parallel lines offset from the centerline plus
+/// short perpendicular end-caps.
+fn draw_window_symbol(
+    painter: &egui::Painter,
+    p_left: egui::Pos2,
+    p_right: egui::Pos2,
+    nx: f32,
+    ny: f32,
+    is_selected: bool,
+) {
+    let color = if is_selected {
+        egui::Color32::from_rgb(120, 210, 255)
+    } else {
+        egui::Color32::from_rgb(80, 160, 220)
+    };
+    let stroke_w = if is_selected { 2.0 } else { 1.5 };
+
+    for sign in [-0.3_f32, 0.3_f32] {
+        let ox = nx * sign;
+        let oy = ny * sign;
+        painter.line_segment(
+            [
+                egui::pos2(p_left.x + ox, p_left.y + oy),
+                egui::pos2(p_right.x + ox, p_right.y + oy),
+            ],
+            egui::Stroke::new(stroke_w, color),
+        );
+    }
+
+    for p in [p_left, p_right] {
+        painter.line_segment(
+            [
+                egui::pos2(p.x + nx * 0.3, p.y + ny * 0.3),
+                egui::pos2(p.x - nx * 0.3, p.y - ny * 0.3),
+            ],
+            egui::Stroke::new(stroke_w, color),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// App drawing methods
+// ---------------------------------------------------------------------------
+
 impl App {
+    // -----------------------------------------------------------------------
+    // draw_walls — two-pass: geometry then overlays
+    // -----------------------------------------------------------------------
+
     pub(super) fn draw_walls(&self, painter: &egui::Painter, rect: egui::Rect) {
+        let center = rect.center();
+        let (joint_map, hub_polygons) =
+            compute_joints(&self.project.walls);
+
+        let (overlays, section_labels) =
+            self.draw_wall_geometry(painter, rect, &joint_map);
+
+        // Hub polygons (joint fills) between passes
+        let wall_outline = egui::Color32::from_rgb(40, 40, 42);
+        for hub in &hub_polygons {
+            if hub.vertices.len() >= 3 {
+                let screen_verts: Vec<egui::Pos2> = hub.vertices
+                    .iter()
+                    .map(|p| world_to_screen(&self.editor.canvas, center, *p))
+                    .collect();
+                painter.add(egui::Shape::convex_polygon(
+                    screen_verts,
+                    hub.fill,
+                    egui::Stroke::new(1.0, wall_outline),
+                ));
+            }
+        }
+
+        self.draw_wall_overlays(painter, &overlays, &section_labels);
+    }
+
+    /// Pass 1: render wall bodies, section fills, junction ticks and outlines.
+    /// Returns overlay data and section labels for deferred rendering in pass 2.
+    fn draw_wall_geometry(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        joint_map: &std::collections::HashMap<(uuid::Uuid, bool), crate::editor::wall_joints::JointVertices>,
+    ) -> (Vec<WallOverlay>, Vec<SectionLabel>) {
         let center = rect.center();
         let wall_fill = egui::Color32::from_rgb(140, 140, 145);
         let wall_outline = egui::Color32::from_rgb(40, 40, 42);
-        let start_color = egui::Color32::from_rgb(60, 200, 80);
-        let end_color = egui::Color32::from_rgb(230, 210, 50);
-
 
         let selected_id = match self.editor.selection {
             Selection::Wall(id) => Some(id),
             _ => None,
         };
 
-        let (joint_map, hub_polygons) = compute_joints(&self.project.walls, &self.editor.canvas, center);
-
-        // Blend a palette color with the wall gray base to produce a muted opaque fill
         let blend_color = |palette: (u8, u8, u8), factor: f32| -> egui::Color32 {
             let base = (140.0_f32, 140.0, 145.0);
             egui::Color32::from_rgb(
@@ -70,85 +301,48 @@ impl App {
             )
         };
 
-        // Collect overlay elements to draw on top of hub polygons
-        struct WallOverlay {
-            is_selected: bool,
-            corners: [egui::Pos2; 4],
-            start_screen: egui::Pos2,
-            end_screen: egui::Pos2,
-            wall_angle: f32,
-            len: f32,
-            thickness_mm: f64,
-        }
-
         let mut overlays: Vec<WallOverlay> = Vec::new();
-
-        // Collect section label data for deferred drawing
-        struct SectionLabel {
-            pos: egui::Pos2,
-            text: String,
-            color: egui::Color32,
-            wall_angle: f32,
-        }
         let mut section_labels: Vec<SectionLabel> = Vec::new();
 
-        // --- Pass 1: wall geometry (bodies, section fills, junction ticks) ---
         for wall in &self.project.walls {
+            let geo = match WallScreenGeometry::from_wall(wall, &self.editor.canvas, center) {
+                Some(g) => g,
+                None => continue,
+            };
             let is_selected = selected_id == Some(wall.id);
 
-            let start_screen = self.editor.canvas.world_to_screen(
-                egui::pos2(wall.start.x as f32, wall.start.y as f32),
-                center,
-            );
-            let end_screen = self.editor.canvas.world_to_screen(
-                egui::pos2(wall.end.x as f32, wall.end.y as f32),
-                center,
-            );
-
-            let dx = end_screen.x - start_screen.x;
-            let dy = end_screen.y - start_screen.y;
-            let len = (dx * dx + dy * dy).sqrt();
-            if len < 0.1 {
-                continue;
-            }
-
-            let half_thick_screen = (wall.thickness as f32 * self.editor.canvas.zoom) / 2.0;
-            let nx = -dy / len * half_thick_screen;
-            let ny = dx / len * half_thick_screen;
-
-            let default_start_left = egui::pos2(start_screen.x + nx, start_screen.y + ny);
-            let default_end_left = egui::pos2(end_screen.x + nx, end_screen.y + ny);
-            let default_end_right = egui::pos2(end_screen.x - nx, end_screen.y - ny);
-            let default_start_right = egui::pos2(start_screen.x - nx, start_screen.y - ny);
+            let default_start_left = geo.left_at(0.0);
+            let default_end_left = geo.left_at(1.0);
+            let default_end_right = geo.right_at(1.0);
+            let default_start_right = geo.right_at(0.0);
 
             let (start_left, start_right) = match joint_map.get(&(wall.id, false)) {
-                Some(jv) => (jv.left, jv.right),
+                Some(jv) => (
+                    world_to_screen(&self.editor.canvas, center, jv.left),
+                    world_to_screen(&self.editor.canvas, center, jv.right),
+                ),
                 None => (default_start_left, default_start_right),
             };
             let (end_left, end_right) = match joint_map.get(&(wall.id, true)) {
-                Some(jv) => (jv.left, jv.right),
+                Some(jv) => (
+                    world_to_screen(&self.editor.canvas, center, jv.left),
+                    world_to_screen(&self.editor.canvas, center, jv.right),
+                ),
                 None => (default_end_left, default_end_right),
             };
 
             let corners = [start_left, end_left, end_right, start_right];
 
-            // Compute left side section count for global color offset
             let left_section_count = wall.left_side.junctions.len() + 1;
 
-            // Section fill quads — each section is an opaque half-width polygon
+            // Section fill quads
             for (side_idx, (side_data, sign)) in [
                 (&wall.left_side, 1.0_f32),
                 (&wall.right_side, -1.0_f32),
             ].iter().enumerate() {
-                let mut boundaries = vec![0.0_f32];
-                for j in &side_data.junctions {
-                    boundaries.push(j.t as f32);
-                }
-                boundaries.push(1.0);
-
+                let boundaries = wall_section_boundaries(side_data);
                 let color_offset = if side_idx == 0 { 0 } else { left_section_count };
 
-                // Mitered outer corners for this side
                 let (side_start, side_end) = if *sign > 0.0 {
                     (start_left, end_left)
                 } else {
@@ -167,29 +361,26 @@ impl App {
                         wall_fill
                     };
 
-                    // Centerline points
-                    let p0_center = egui::pos2(
-                        start_screen.x + dx * t0,
-                        start_screen.y + dy * t0,
-                    );
-                    let p1_center = egui::pos2(
-                        start_screen.x + dx * t1,
-                        start_screen.y + dy * t1,
-                    );
+                    let p0_center = geo.lerp(t0);
+                    let p1_center = geo.lerp(t1);
 
-                    // Outer edge: use mitered corners at wall endpoints, straight normal elsewhere
                     let p0_edge = if t0 == 0.0 {
                         side_start
                     } else {
-                        egui::pos2(p0_center.x + nx * *sign, p0_center.y + ny * *sign)
+                        egui::pos2(
+                            p0_center.x + geo.nx * *sign,
+                            p0_center.y + geo.ny * *sign,
+                        )
                     };
                     let p1_edge = if t1 == 1.0 {
                         side_end
                     } else {
-                        egui::pos2(p1_center.x + nx * *sign, p1_center.y + ny * *sign)
+                        egui::pos2(
+                            p1_center.x + geo.nx * *sign,
+                            p1_center.y + geo.ny * *sign,
+                        )
                     };
 
-                    // Ensure consistent CW winding for both sides
                     let quad = if *sign > 0.0 {
                         vec![p0_center, p1_center, p1_edge, p0_edge]
                     } else {
@@ -206,10 +397,11 @@ impl App {
                 if is_selected {
                     for j in &side_data.junctions {
                         let jt = j.t as f32;
-                        let jx = start_screen.x + dx * jt;
-                        let jy = start_screen.y + dy * jt;
-                        let j_center = egui::pos2(jx, jy);
-                        let j_edge = egui::pos2(jx + nx * *sign, jy + ny * *sign);
+                        let j_center = geo.lerp(jt);
+                        let j_edge = egui::pos2(
+                            j_center.x + geo.nx * *sign,
+                            j_center.y + geo.ny * *sign,
+                        );
                         painter.line_segment(
                             [j_center, j_edge],
                             egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 200, 60)),
@@ -224,16 +416,14 @@ impl App {
                 egui::Stroke::new(1.0, wall_outline),
             ));
 
-            let wall_angle = dy.atan2(dx);
-
-            // Collect overlay data for this wall
+            // Collect overlay data
             overlays.push(WallOverlay {
                 is_selected,
                 corners,
-                start_screen,
-                end_screen,
-                wall_angle,
-                len,
+                start_screen: geo.start,
+                end_screen: geo.end,
+                wall_angle: geo.angle,
+                len: geo.len,
                 thickness_mm: wall.thickness,
             });
 
@@ -243,24 +433,17 @@ impl App {
                 (&wall.left_side, 1.0_f32),
                 (&wall.right_side, -1.0_f32),
             ].iter().enumerate() {
-                let mut boundaries = vec![0.0_f32];
-                for j in &side_data.junctions {
-                    boundaries.push(j.t as f32);
-                }
-                boundaries.push(1.0);
-
+                let boundaries = wall_section_boundaries(side_data);
                 let color_offset = if side_idx == 0 { 0 } else { left_section_count };
 
                 for (i, section) in side_data.sections.iter().enumerate() {
                     if i >= boundaries.len() - 1 {
                         break;
                     }
-                    let t0 = boundaries[i];
-                    let t1 = boundaries[i + 1];
-                    let t_mid = (t0 + t1) / 2.0;
+                    let t_mid = (boundaries[i] + boundaries[i + 1]) / 2.0;
 
-                    let mid_x = start_screen.x + dx * t_mid + nx * sign * 1.6;
-                    let mid_y = start_screen.y + dy * t_mid + ny * sign * 1.6;
+                    let mid_x = geo.start.x + geo.dx * t_mid + geo.nx * sign * 1.6;
+                    let mid_y = geo.start.y + geo.dy * t_mid + geo.ny * sign * 1.6;
 
                     let label_color = if is_selected {
                         let global_idx = color_offset + i;
@@ -277,25 +460,27 @@ impl App {
                         pos: egui::pos2(mid_x, mid_y),
                         text: format!("{:.0} мм - {:.2} м²", length_mm, area_m2),
                         color: label_color,
-                        wall_angle,
+                        wall_angle: geo.angle,
                     });
                 }
             }
         }
 
-        // --- Draw hub polygons (joint fills) ---
-        for hub in &hub_polygons {
-            if hub.vertices.len() >= 3 {
-                painter.add(egui::Shape::convex_polygon(
-                    hub.vertices.clone(),
-                    hub.fill,
-                    egui::Stroke::new(1.0, wall_outline),
-                ));
-            }
-        }
+        (overlays, section_labels)
+    }
 
-        // --- Pass 2: overlays on top (selection outlines, endpoint circles, text labels) ---
-        for ov in &overlays {
+    /// Pass 2: draw selection outlines, endpoint circles, and text labels
+    /// on top of all geometry and hub polygons.
+    fn draw_wall_overlays(
+        &self,
+        painter: &egui::Painter,
+        overlays: &[WallOverlay],
+        section_labels: &[SectionLabel],
+    ) {
+        let start_color = egui::Color32::from_rgb(60, 200, 80);
+        let end_color = egui::Color32::from_rgb(230, 210, 50);
+
+        for ov in overlays {
             if ov.is_selected {
                 let sel_outline = egui::Color32::from_rgb(60, 160, 255);
                 painter.add(egui::Shape::closed_line(
@@ -325,7 +510,7 @@ impl App {
         }
 
         // Section dimension labels
-        for sl in &section_labels {
+        for sl in section_labels {
             paint_rotated_text(
                 painter,
                 sl.pos,
@@ -336,6 +521,10 @@ impl App {
             );
         }
     }
+
+    // -----------------------------------------------------------------------
+    // draw_wall_preview
+    // -----------------------------------------------------------------------
 
     pub(super) fn draw_wall_preview(&self, painter: &egui::Painter, rect: egui::Rect) {
         let center = rect.center();
@@ -379,7 +568,6 @@ impl App {
                     let pdy = end_screen.y - start_screen.y;
                     let preview_angle = pdy.atan2(pdx);
 
-                    // Offset label perpendicular to the wall (above the line)
                     let plen = (pdx * pdx + pdy * pdy).sqrt().max(0.001);
                     let perp_x = -pdy / plen * 12.0;
                     let perp_y = pdx / plen * 12.0;
@@ -410,7 +598,6 @@ impl App {
                 center,
             );
 
-            // Snap indicator: colored ring based on snap type
             let (indicator_color, radius) = match &self.editor.wall_tool.last_snap {
                 Some(snap) => match &snap.snap_type {
                     SnapType::Vertex => (egui::Color32::from_rgb(60, 200, 80), 6.0),
@@ -430,186 +617,131 @@ impl App {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // draw_openings — thin dispatch loop
+    // -----------------------------------------------------------------------
+
     pub(super) fn draw_openings(&self, painter: &egui::Painter, rect: egui::Rect) {
         let center = rect.center();
-        let canvas_bg = egui::Color32::from_rgb(45, 45, 48);
-
         let selected_opening_id = match self.editor.selection {
             Selection::Opening(id) => Some(id),
             _ => None,
         };
 
         for opening in &self.project.openings {
-            let wall = match opening.wall_id {
-                Some(wid) => match self.project.walls.iter().find(|w| w.id == wid) {
-                    Some(w) => w,
-                    None => continue,
-                },
-                None => {
-                    let pos = match self.editor.orphan_positions.get(&opening.id) {
-                        Some(p) => *p,
+            match opening.wall_id {
+                Some(wid) => {
+                    let wall = match self.project.wall(wid) {
+                        Some(w) => w,
                         None => continue,
                     };
-                    let screen_pos = self.editor.canvas.world_to_screen(
-                        egui::pos2(pos.x as f32, pos.y as f32), center,
-                    );
-                    let w_screen = opening.kind.width() as f32 * self.editor.canvas.zoom;
-                    let h_screen = 6.0_f32.max(opening.kind.height() as f32 * self.editor.canvas.zoom * 0.05);
-                    let r = egui::Rect::from_center_size(
-                        screen_pos,
-                        egui::vec2(w_screen, h_screen),
-                    );
-                    let red = egui::Color32::from_rgb(220, 50, 50);
                     let is_selected = selected_opening_id == Some(opening.id);
-                    let stroke_w = if is_selected { 3.0 } else { 2.0 };
-                    painter.rect_stroke(r, 0.0, egui::Stroke::new(stroke_w, red), egui::StrokeKind::Outside);
-                    let label = match &opening.kind {
-                        OpeningKind::Door { .. } => "⚠ Дверь",
-                        OpeningKind::Window { .. } => "⚠ Окно",
-                    };
-                    painter.text(
-                        egui::pos2(screen_pos.x, r.top() - 4.0),
-                        egui::Align2::CENTER_BOTTOM,
-                        label,
-                        egui::FontId::proportional(12.0 * self.label_scale),
-                        red,
-                    );
-                    continue;
+                    self.draw_attached_opening(painter, center, opening, wall, is_selected);
                 }
-            };
-
-            let wall_len = wall.length();
-            if wall_len < 1.0 {
-                continue;
-            }
-
-            let opening_width = opening.kind.width();
-            let half_w = opening_width / 2.0;
-            let t_left = ((opening.offset_along_wall - half_w) / wall_len).clamp(0.0, 1.0);
-            let t_right = ((opening.offset_along_wall + half_w) / wall_len).clamp(0.0, 1.0);
-
-            let lerp_wall = |t: f64| -> egui::Pos2 {
-                let wx = wall.start.x + (wall.end.x - wall.start.x) * t;
-                let wy = wall.start.y + (wall.end.y - wall.start.y) * t;
-                self.editor
-                    .canvas
-                    .world_to_screen(egui::pos2(wx as f32, wy as f32), center)
-            };
-
-            let p_left = lerp_wall(t_left);
-            let p_right = lerp_wall(t_right);
-
-            let start_screen = self.editor.canvas.world_to_screen(
-                egui::pos2(wall.start.x as f32, wall.start.y as f32),
-                center,
-            );
-            let end_screen = self.editor.canvas.world_to_screen(
-                egui::pos2(wall.end.x as f32, wall.end.y as f32),
-                center,
-            );
-            let dx = end_screen.x - start_screen.x;
-            let dy = end_screen.y - start_screen.y;
-            let len = (dx * dx + dy * dy).sqrt();
-            if len < 0.1 {
-                continue;
-            }
-
-            let half_thick = (wall.thickness as f32 * self.editor.canvas.zoom) / 2.0;
-            let nx = -dy / len * half_thick;
-            let ny = dx / len * half_thick;
-
-            let is_selected = selected_opening_id == Some(opening.id);
-
-            let gap_corners = [
-                egui::pos2(p_left.x + nx * 1.1, p_left.y + ny * 1.1),
-                egui::pos2(p_right.x + nx * 1.1, p_right.y + ny * 1.1),
-                egui::pos2(p_right.x - nx * 1.1, p_right.y - ny * 1.1),
-                egui::pos2(p_left.x - nx * 1.1, p_left.y - ny * 1.1),
-            ];
-            painter.add(egui::Shape::convex_polygon(
-                gap_corners.to_vec(),
-                canvas_bg,
-                egui::Stroke::NONE,
-            ));
-
-            match &opening.kind {
-                OpeningKind::Door { .. } => {
-                    let color = if is_selected {
-                        egui::Color32::from_rgb(240, 180, 80)
-                    } else {
-                        egui::Color32::from_rgb(180, 120, 60)
-                    };
-                    let stroke_w = if is_selected { 2.0 } else { 1.5 };
-
-                    painter.line_segment(
-                        [p_left, p_right],
-                        egui::Stroke::new(stroke_w, color),
-                    );
-
-                    let arc_r = ((p_right.x - p_left.x).powi(2)
-                        + (p_right.y - p_left.y).powi(2))
-                    .sqrt();
-                    if arc_r > 1.0 {
-                        let ux = (p_right.x - p_left.x) / arc_r;
-                        let uy = (p_right.y - p_left.y) / arc_r;
-                        let px = -uy;
-                        let py = ux;
-
-                        let n_seg = 16;
-                        let mut pts = Vec::with_capacity(n_seg + 1);
-                        for i in 0..=n_seg {
-                            let a = (i as f32 / n_seg as f32) * std::f32::consts::FRAC_PI_2;
-                            let d_x = ux * a.cos() + px * a.sin();
-                            let d_y = uy * a.cos() + py * a.sin();
-                            pts.push(egui::pos2(
-                                p_left.x + d_x * arc_r,
-                                p_left.y + d_y * arc_r,
-                            ));
-                        }
-                        for i in 0..n_seg {
-                            painter.line_segment(
-                                [pts[i], pts[i + 1]],
-                                egui::Stroke::new(stroke_w, color),
-                            );
-                        }
-                    }
-                }
-                OpeningKind::Window { .. } => {
-                    let color = if is_selected {
-                        egui::Color32::from_rgb(120, 210, 255)
-                    } else {
-                        egui::Color32::from_rgb(80, 160, 220)
-                    };
-                    let stroke_w = if is_selected { 2.0 } else { 1.5 };
-
-                    for sign in [-0.3_f32, 0.3_f32] {
-                        let ox = nx * sign;
-                        let oy = ny * sign;
-                        painter.line_segment(
-                            [
-                                egui::pos2(p_left.x + ox, p_left.y + oy),
-                                egui::pos2(p_right.x + ox, p_right.y + oy),
-                            ],
-                            egui::Stroke::new(stroke_w, color),
-                        );
-                    }
-
-                    for p in [p_left, p_right] {
-                        painter.line_segment(
-                            [
-                                egui::pos2(p.x + nx * 0.3, p.y + ny * 0.3),
-                                egui::pos2(p.x - nx * 0.3, p.y - ny * 0.3),
-                            ],
-                            egui::Stroke::new(stroke_w, color),
-                        );
-                    }
+                None => {
+                    let is_selected = selected_opening_id == Some(opening.id);
+                    self.draw_orphaned_opening(painter, center, opening, is_selected);
                 }
             }
         }
     }
 
+    /// Draw an opening that is attached to a wall.
+    fn draw_attached_opening(
+        &self,
+        painter: &egui::Painter,
+        center: egui::Pos2,
+        opening: &crate::model::Opening,
+        wall: &Wall,
+        is_selected: bool,
+    ) {
+        let geo = match WallScreenGeometry::from_wall(wall, &self.editor.canvas, center) {
+            Some(g) => g,
+            None => return,
+        };
+
+        let wall_len = wall.length();
+        if wall_len < 1.0 {
+            return;
+        }
+
+        let opening_width = opening.kind.width();
+        let half_w = opening_width / 2.0;
+        let t_left = ((opening.offset_along_wall - half_w) / wall_len).clamp(0.0, 1.0) as f32;
+        let t_right = ((opening.offset_along_wall + half_w) / wall_len).clamp(0.0, 1.0) as f32;
+
+        let p_left = geo.lerp(t_left);
+        let p_right = geo.lerp(t_right);
+
+        let canvas_bg = egui::Color32::from_rgb(45, 45, 48);
+
+        // Gap cutout
+        let gap_corners = [
+            egui::pos2(p_left.x + geo.nx * 1.1, p_left.y + geo.ny * 1.1),
+            egui::pos2(p_right.x + geo.nx * 1.1, p_right.y + geo.ny * 1.1),
+            egui::pos2(p_right.x - geo.nx * 1.1, p_right.y - geo.ny * 1.1),
+            egui::pos2(p_left.x - geo.nx * 1.1, p_left.y - geo.ny * 1.1),
+        ];
+        painter.add(egui::Shape::convex_polygon(
+            gap_corners.to_vec(),
+            canvas_bg,
+            egui::Stroke::NONE,
+        ));
+
+        // Symbol
+        match &opening.kind {
+            OpeningKind::Door { .. } => {
+                draw_door_symbol(painter, p_left, p_right, geo.nx, geo.ny, is_selected);
+            }
+            OpeningKind::Window { .. } => {
+                draw_window_symbol(painter, p_left, p_right, geo.nx, geo.ny, is_selected);
+            }
+        }
+    }
+
+    /// Draw an orphaned opening (not attached to any wall).
+    fn draw_orphaned_opening(
+        &self,
+        painter: &egui::Painter,
+        center: egui::Pos2,
+        opening: &crate::model::Opening,
+        is_selected: bool,
+    ) {
+        let pos = match self.editor.orphan_positions.get(&opening.id) {
+            Some(p) => *p,
+            None => return,
+        };
+        let screen_pos = self.editor.canvas.world_to_screen(
+            egui::pos2(pos.x as f32, pos.y as f32), center,
+        );
+        let w_screen = opening.kind.width() as f32 * self.editor.canvas.zoom;
+        let h_screen = 6.0_f32.max(opening.kind.height() as f32 * self.editor.canvas.zoom * 0.05);
+        let r = egui::Rect::from_center_size(
+            screen_pos,
+            egui::vec2(w_screen, h_screen),
+        );
+        let red = egui::Color32::from_rgb(220, 50, 50);
+        let stroke_w = if is_selected { 3.0 } else { 2.0 };
+        painter.rect_stroke(r, 0.0, egui::Stroke::new(stroke_w, red), egui::StrokeKind::Outside);
+        let label = match &opening.kind {
+            OpeningKind::Door { .. } => "\u{26a0} Дверь",
+            OpeningKind::Window { .. } => "\u{26a0} Окно",
+        };
+        painter.text(
+            egui::pos2(screen_pos.x, r.top() - 4.0),
+            egui::Align2::CENTER_BOTTOM,
+            label,
+            egui::FontId::proportional(12.0 * self.label_scale),
+            red,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // draw_rooms
+    // -----------------------------------------------------------------------
+
     pub(super) fn draw_rooms(&self, painter: &egui::Painter, rect: egui::Rect) {
-        use crate::editor::room_metrics::compute_room_metrics;
+        use crate::model::room_metrics::compute_room_metrics;
 
         let center = rect.center();
 
@@ -647,7 +779,7 @@ impl App {
                 })
                 .collect();
 
-            let triangles = crate::editor::triangulation::triangulate(&screen_pts);
+            let triangles = triangulate(&screen_pts);
             for tri in &triangles {
                 let tri_pts = vec![screen_pts[tri[0]], screen_pts[tri[1]], screen_pts[tri[2]]];
                 painter.add(egui::Shape::convex_polygon(tri_pts, fill, egui::Stroke::NONE));
@@ -676,6 +808,10 @@ impl App {
             );
         }
     }
+
+    // -----------------------------------------------------------------------
+    // draw_labels
+    // -----------------------------------------------------------------------
 
     pub(super) fn draw_labels(&self, painter: &egui::Painter, rect: egui::Rect) {
         let center = rect.center();
@@ -731,21 +867,30 @@ impl App {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // draw_opening_preview — reuses door/window symbol functions
+    // -----------------------------------------------------------------------
+
     pub(super) fn draw_opening_preview(&self, painter: &egui::Painter, rect: egui::Rect) {
         let center = rect.center();
         let wall_id = match self.editor.opening_tool.hover_wall_id {
             Some(id) => id,
             None => return,
         };
-        let wall = match self.project.walls.iter().find(|w| w.id == wall_id) {
+        let wall = match self.project.wall(wall_id) {
             Some(w) => w,
             None => return,
         };
 
+        let geo = match WallScreenGeometry::from_wall(wall, &self.editor.canvas, center) {
+            Some(g) => g,
+            None => return,
+        };
+
         let opening_width = if self.editor.active_tool == EditorTool::Door {
-            900.0
+            self.project.defaults.door_width
         } else {
-            1200.0
+            self.project.defaults.window_width
         };
 
         let offset = self.editor.opening_tool.hover_offset;
@@ -755,30 +900,13 @@ impl App {
         }
 
         let half_w = opening_width / 2.0;
-        let t_center = offset / wall_len;
-        let t_left = ((offset - half_w) / wall_len).clamp(0.0, 1.0);
-        let t_right = ((offset + half_w) / wall_len).clamp(0.0, 1.0);
+        let t_center = (offset / wall_len) as f32;
+        let t_left = ((offset - half_w) / wall_len).clamp(0.0, 1.0) as f32;
+        let t_right = ((offset + half_w) / wall_len).clamp(0.0, 1.0) as f32;
 
-        let lerp_wall = |t: f64| -> egui::Pos2 {
-            let wx = wall.start.x + (wall.end.x - wall.start.x) * t;
-            let wy = wall.start.y + (wall.end.y - wall.start.y) * t;
-            self.editor.canvas.world_to_screen(egui::pos2(wx as f32, wy as f32), center)
-        };
-
-        let p_left = lerp_wall(t_left);
-        let p_right = lerp_wall(t_right);
-        let p_center = lerp_wall(t_center);
-
-        let dx = p_right.x - p_left.x;
-        let dy = p_right.y - p_left.y;
-        let seg_len = (dx * dx + dy * dy).sqrt();
-        if seg_len < 0.5 {
-            return;
-        }
-
-        let half_thick_screen = (wall.thickness as f32 * self.editor.canvas.zoom) / 2.0;
-        let nx = -dy / seg_len * half_thick_screen;
-        let ny = dx / seg_len * half_thick_screen;
+        let p_left = geo.lerp(t_left);
+        let p_right = geo.lerp(t_right);
+        let p_center = geo.lerp(t_center);
 
         let preview_color = if self.editor.active_tool == EditorTool::Door {
             egui::Color32::from_rgba_premultiplied(180, 120, 60, 160)
@@ -787,10 +915,10 @@ impl App {
         };
 
         let corners = [
-            egui::pos2(p_left.x + nx, p_left.y + ny),
-            egui::pos2(p_right.x + nx, p_right.y + ny),
-            egui::pos2(p_right.x - nx, p_right.y - ny),
-            egui::pos2(p_left.x - nx, p_left.y - ny),
+            egui::pos2(p_left.x + geo.nx, p_left.y + geo.ny),
+            egui::pos2(p_right.x + geo.nx, p_right.y + geo.ny),
+            egui::pos2(p_right.x - geo.nx, p_right.y - geo.ny),
+            egui::pos2(p_left.x - geo.nx, p_left.y - geo.ny),
         ];
 
         painter.add(egui::Shape::convex_polygon(
@@ -805,11 +933,27 @@ impl App {
             "Окно"
         };
         painter.text(
-            egui::pos2(p_center.x, p_center.y - half_thick_screen - 10.0),
+            egui::pos2(p_center.x, p_center.y - geo.half_thick - 10.0),
             egui::Align2::CENTER_BOTTOM,
             label,
             egui::FontId::proportional(11.0 * self.label_scale),
             preview_color,
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Triangulation helper
+// ---------------------------------------------------------------------------
+
+/// Triangulate a simple polygon using earcutr (earcut algorithm).
+/// Input: vertices in order (CCW or CW).
+/// Output: list of triangle index triples [i, j, k] referencing input vertices.
+fn triangulate(vertices: &[egui::Pos2]) -> Vec<[usize; 3]> {
+    if vertices.len() < 3 {
+        return Vec::new();
+    }
+    let coords: Vec<f32> = vertices.iter().flat_map(|p| [p.x, p.y]).collect();
+    let indices = earcutr::earcut(&coords, &[], 2).unwrap_or_default();
+    indices.chunks(3).map(|c| [c[0], c[1], c[2]]).collect()
 }

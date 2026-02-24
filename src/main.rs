@@ -1,10 +1,8 @@
 mod app;
 mod model;
 mod editor;
-mod panels;
 mod export;
 mod persistence;
-mod history;
 
 fn load_icon() -> eframe::egui::IconData {
     let img = image::load_from_memory(include_bytes!("../assets/icon.png"))

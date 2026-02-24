@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::model::{AssignedService, OpeningKind, TargetObjectType, WallSide};
+use crate::model::{AssignedService, TargetObjectType, WallSide};
 use super::{App, ServiceTarget};
 
 impl App {
@@ -11,10 +11,7 @@ impl App {
         let target_type = match &self.service_picker_target {
             Some(ServiceTarget::WallSide { .. }) => Some(TargetObjectType::Wall),
             Some(ServiceTarget::Opening { opening_id }) => {
-                self.project.openings.iter().find(|o| o.id == *opening_id).map(|o| match &o.kind {
-                    OpeningKind::Door { .. } => TargetObjectType::Door,
-                    OpeningKind::Window { .. } => TargetObjectType::Window,
-                })
+                self.project.opening(*opening_id).map(|o| o.kind.target_type())
             }
             Some(ServiceTarget::Room { .. }) => Some(TargetObjectType::Room),
             None => None,

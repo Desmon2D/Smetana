@@ -1,8 +1,35 @@
 use eframe::egui;
 
 use crate::editor::Selection;
-use crate::model::{Opening, OpeningKind, SideData, TargetObjectType};
+use crate::model::{Opening, SideData, TargetObjectType};
 use super::{App, SECTION_COLORS};
+
+/// A horizontal row with a label and a `DragValue`.  Returns `true` when the
+/// value was changed by the user.
+pub(super) fn labeled_drag(
+    ui: &mut egui::Ui,
+    label: &str,
+    val: &mut f64,
+    range: std::ops::RangeInclusive<f64>,
+    speed: f64,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        changed = ui
+            .add(egui::DragValue::new(val).range(range).speed(speed))
+            .changed();
+    });
+    changed
+}
+
+/// A horizontal row with a label and a read-only value string.
+pub(super) fn labeled_value(ui: &mut egui::Ui, label: &str, value: String) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.label(value);
+    });
+}
 
 impl App {
     pub(super) fn has_validation_errors(&self) -> bool {
@@ -11,7 +38,7 @@ impl App {
                 return true;
             }
             if let Some(wid) = opening.wall_id {
-                match self.project.walls.iter().find(|w| w.id == wid) {
+                match self.project.wall(wid) {
                     None => return true,
                     Some(wall) => {
                         let wall_len = wall.length();
@@ -34,7 +61,7 @@ impl App {
             None => {
                 errors.push("Проём не привязан к стене");
             }
-            Some(wid) => match self.project.walls.iter().find(|w| w.id == wid) {
+            Some(wid) => match self.project.wall(wid) {
                 None => {
                     errors.push("Стена не найдена");
                 }
@@ -56,10 +83,7 @@ impl App {
         match self.editor.selection {
             Selection::Wall(_) => Some(TargetObjectType::Wall),
             Selection::Opening(id) => {
-                self.project.openings.iter().find(|o| o.id == id).map(|o| match &o.kind {
-                    OpeningKind::Door { .. } => TargetObjectType::Door,
-                    OpeningKind::Window { .. } => TargetObjectType::Window,
-                })
+                self.project.opening(id).map(|o| o.kind.target_type())
             }
             Selection::Room(_) => Some(TargetObjectType::Room),
             Selection::Label(_) => None,
@@ -81,46 +105,13 @@ impl App {
                 ui.label(format!("Секция {}", global_idx + 1));
             });
             ui.indent(format!("{side_id}_section_{i}"), |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Длина (мм):");
-                    if ui.add(
-                        egui::DragValue::new(&mut side_data.sections[i].length)
-                            .range(1.0..=100000.0)
-                            .speed(10.0),
-                    ).changed() {
-                        changed = true;
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Выс. начала (мм):");
-                    if ui.add(
-                        egui::DragValue::new(&mut side_data.sections[i].height_start)
-                            .range(100.0..=10000.0)
-                            .speed(10.0),
-                    ).changed() {
-                        changed = true;
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Выс. конца (мм):");
-                    if ui.add(
-                        egui::DragValue::new(&mut side_data.sections[i].height_end)
-                            .range(100.0..=10000.0)
-                            .speed(10.0),
-                    ).changed() {
-                        changed = true;
-                    }
-                });
+                changed |= labeled_drag(ui, "Длина (мм):", &mut side_data.sections[i].length, 1.0..=100000.0, 10.0);
+                changed |= labeled_drag(ui, "Выс. начала (мм):", &mut side_data.sections[i].height_start, 100.0..=10000.0, 10.0);
+                changed |= labeled_drag(ui, "Выс. конца (мм):", &mut side_data.sections[i].height_end, 100.0..=10000.0, 10.0);
                 let gross_m2 = side_data.sections[i].gross_area() / 1_000_000.0;
-                ui.horizontal(|ui| {
-                    ui.label("Площадь (брутто):");
-                    ui.label(format!("{:.2} м²", gross_m2));
-                });
+                labeled_value(ui, "Площадь (брутто):", format!("{:.2} м²", gross_m2));
                 let net_m2 = section_net_areas.get(i).copied().unwrap_or(0.0) / 1_000_000.0;
-                ui.horizontal(|ui| {
-                    ui.label("Площадь (нетто):");
-                    ui.label(format!("{:.2} м²", net_m2));
-                });
+                labeled_value(ui, "Площадь (нетто):", format!("{:.2} м²", net_m2));
             });
         }
         if changed {

@@ -1,67 +1,67 @@
 use std::collections::HashMap;
 
 use eframe::egui;
+use glam::DVec2;
 use uuid::Uuid;
 
-use crate::editor::canvas::Canvas;
+use crate::editor::endpoint_merge::merge_endpoints;
 use crate::model::Wall;
-use super::wall_joints_miter::{compute_two_wall_miter, compute_hub_polygon, line_line_intersection};
 
 /// Merge epsilon for detecting shared endpoints (mm).
 const MERGE_EPS: f64 = 5.0;
 
 /// Maximum miter extension as a multiple of the thicker wall's half-thickness.
-pub(super) const MAX_MITER_RATIO: f32 = 3.0;
+const MAX_MITER_RATIO: f64 = 3.0;
 
-/// Computed joint vertices for one end of a wall (screen coordinates).
+/// Computed joint vertices for one end of a wall (world coordinates, mm).
 pub struct JointVertices {
     /// Adjusted left-side vertex (left = positive normal direction).
-    pub left: egui::Pos2,
+    pub left: DVec2,
     /// Adjusted right-side vertex (right = negative normal direction).
-    pub right: egui::Pos2,
+    pub right: DVec2,
 }
 
 /// A hub polygon at a wall junction, drawn on top to cover internal outline artifacts.
 pub struct HubPolygon {
-    pub vertices: Vec<egui::Pos2>,
+    pub vertices: Vec<DVec2>,
     pub fill: egui::Color32,
 }
 
-/// Per-wall direction info at a junction (precomputed).
-pub(super) struct WallAtJunction {
-    pub(super) wall_id: Uuid,
-    pub(super) is_end: bool,
+/// Per-wall direction info at a junction (precomputed, world coordinates).
+struct WallAtJunction {
+    wall_id: Uuid,
+    is_end: bool,
     /// Outgoing angle from junction (radians).
-    pub(super) angle: f32,
-    /// Half-thickness in screen pixels.
-    pub(super) half_thick: f32,
-    /// Left edge point at the junction (perpendicular offset, screen coords).
-    pub(super) left: egui::Pos2,
-    /// Right edge point at the junction (perpendicular offset, screen coords).
-    pub(super) right: egui::Pos2,
+    angle: f64,
+    /// Half-thickness in mm.
+    half_thick: f64,
+    /// Left edge point at the junction (perpendicular offset, world coords).
+    left: DVec2,
+    /// Right edge point at the junction (perpendicular offset, world coords).
+    right: DVec2,
     /// Outgoing unit direction from junction.
-    pub(super) dir: egui::Vec2,
+    dir: DVec2,
 }
 
 impl WallAtJunction {
-    /// Edge facing the CW direction on screen (increasing atan2 angle, Y-down).
-    /// - is_end=false: left (wall left normal is 90° CW from outgoing on screen)
-    /// - is_end=true: right (wall right normal is 90° CW from outgoing on screen)
-    pub(super) fn cw_edge(&self) -> egui::Pos2 {
+    /// Edge facing the CW direction (increasing atan2 angle).
+    /// - is_end=false: left
+    /// - is_end=true: right
+    fn cw_edge(&self) -> DVec2 {
         if self.is_end { self.right } else { self.left }
     }
 
-    /// Edge facing the CCW direction on screen.
-    pub(super) fn ccw_edge(&self) -> egui::Pos2 {
+    /// Edge facing the CCW direction.
+    fn ccw_edge(&self) -> DVec2 {
         if self.is_end { self.left } else { self.right }
     }
 }
 
 /// Compute adjusted joint vertices for all wall endpoints and hub polygons.
+/// All geometry is computed in world space (mm). The caller converts to
+/// screen coordinates at render time.
 pub fn compute_joints(
     walls: &[Wall],
-    canvas: &Canvas,
-    center: egui::Pos2,
 ) -> (HashMap<(Uuid, bool), JointVertices>, Vec<HubPolygon>) {
     let mut joints: HashMap<(Uuid, bool), JointVertices> = HashMap::new();
     let mut hubs: Vec<HubPolygon> = Vec::new();
@@ -71,31 +71,11 @@ pub fn compute_joints(
     }
 
     // Group wall endpoints by junction (merge within MERGE_EPS).
-    // Each junction: list of (wall_id, is_end, world_point).
-    let mut junction_groups: Vec<(f64, f64, Vec<(Uuid, bool)>)> = Vec::new();
-
-    for wall in walls {
-        for &is_end in &[false, true] {
-            let pt = if is_end { wall.end } else { wall.start };
-            let mut found = false;
-            for (jx, jy, members) in &mut junction_groups {
-                let dx = pt.x - *jx;
-                let dy = pt.y - *jy;
-                if (dx * dx + dy * dy).sqrt() < MERGE_EPS {
-                    members.push((wall.id, is_end));
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                junction_groups.push((pt.x, pt.y, vec![(wall.id, is_end)]));
-            }
-        }
-    }
+    let junction_groups = merge_endpoints(walls, MERGE_EPS);
 
     let wall_fill = egui::Color32::from_rgb(140, 140, 145);
 
-    for (_jx, _jy, members) in &junction_groups {
+    for (_jpos, members) in &junction_groups {
         if members.len() < 2 {
             continue; // Solo endpoint — no joint needed.
         }
@@ -114,55 +94,30 @@ pub fn compute_joints(
                 (wall.start, wall.end)
             };
 
-            let from_screen = canvas.world_to_screen(
-                egui::pos2(from.x as f32, from.y as f32),
-                center,
-            );
-            let to_screen = canvas.world_to_screen(
-                egui::pos2(to.x as f32, to.y as f32),
-                center,
-            );
-
-            // Note: "outgoing" means from junction toward the wall's other end.
-            // For is_end=false: junction is at wall.start, outgoing toward wall.end.
-            // For is_end=true: junction is at wall.end, outgoing toward wall.start.
-            // But for the wall quad, we need the direction start→end always,
-            // and the junction point is `from_screen`.
-            // The outgoing direction from the junction:
-            let out_dx = to_screen.x - from_screen.x;
-            let out_dy = to_screen.y - from_screen.y;
-            let out_len = (out_dx * out_dx + out_dy * out_dy).sqrt();
-            if out_len < 0.1 {
+            // Outgoing direction from the junction:
+            let out = to - from;
+            let out_len = out.length();
+            if out_len < 1e-6 {
                 continue;
             }
-            let dir = egui::vec2(out_dx / out_len, out_dy / out_len);
-            let angle = out_dy.atan2(out_dx);
+            let dir = out / out_len;
+            let angle = out.y.atan2(out.x);
 
-            let half_thick = (wall.thickness as f32 * canvas.zoom) / 2.0;
+            let half_thick = wall.thickness / 2.0;
 
-            // Left normal: rotate dir 90° CCW → (-dir.y, dir.x)
-            // But we need to match the convention in draw_walls:
-            // nx = -dy/len * half_thick, ny = dx/len * half_thick
-            // where (dx, dy) = end_screen - start_screen (wall direction start→end).
-            //
-            // For is_end=false (junction at start): wall dir = (out_dx, out_dy)
-            //   left normal = (-out_dy, out_dx) / out_len  (matches draw_walls: nx=-dy/len, ny=dx/len)
-            // For is_end=true (junction at end): wall dir start→end = (-out_dx, -out_dy)
-            //   left normal = (out_dy, -out_dx) / out_len  (= -(-out_dy, out_dx)/len)
+            // Left normal matching the convention in draw_walls:
+            // For is_end=false (junction at start): wall dir = outgoing dir
+            //   left normal = (-dir.y, dir.x)
+            // For is_end=true (junction at end): wall dir start→end = -outgoing dir
+            //   left normal = (dir.y, -dir.x)
             let normal_left = if !is_end {
-                egui::vec2(-dir.y, dir.x)
+                DVec2::new(-dir.y, dir.x)
             } else {
-                egui::vec2(dir.y, -dir.x)
+                DVec2::new(dir.y, -dir.x)
             };
 
-            let left = egui::pos2(
-                from_screen.x + normal_left.x * half_thick,
-                from_screen.y + normal_left.y * half_thick,
-            );
-            let right = egui::pos2(
-                from_screen.x - normal_left.x * half_thick,
-                from_screen.y - normal_left.y * half_thick,
-            );
+            let left = from + normal_left * half_thick;
+            let right = from - normal_left * half_thick;
 
             waj_list.push(WallAtJunction {
                 wall_id,
@@ -192,37 +147,24 @@ pub fn compute_joints(
     // T-junction end trimming: when a wall connects to another wall's side,
     // trim its end face to be flush with the host wall's side surface.
     for host_wall in walls {
-        for (side_data, sign) in [(&host_wall.left_side, 1.0f32), (&host_wall.right_side, -1.0f32)] {
+        for (side_data, sign) in [(&host_wall.left_side, 1.0_f64), (&host_wall.right_side, -1.0_f64)] {
             if side_data.junctions.is_empty() {
                 continue;
             }
 
-            let host_start_s = canvas.world_to_screen(
-                egui::pos2(host_wall.start.x as f32, host_wall.start.y as f32),
-                center,
-            );
-            let host_end_s = canvas.world_to_screen(
-                egui::pos2(host_wall.end.x as f32, host_wall.end.y as f32),
-                center,
-            );
-
-            let host_dx = host_end_s.x - host_start_s.x;
-            let host_dy = host_end_s.y - host_start_s.y;
-            let host_len = (host_dx * host_dx + host_dy * host_dy).sqrt();
-            if host_len < 0.1 {
+            let host_d = host_wall.end - host_wall.start;
+            let host_len = host_d.length();
+            if host_len < 1e-6 {
                 continue;
             }
 
             // Host wall direction and left normal (looking start→end).
-            let host_dir = egui::vec2(host_dx / host_len, host_dy / host_len);
-            let host_normal = egui::vec2(-host_dir.y, host_dir.x);
-            let host_half_thick = (host_wall.thickness as f32 * canvas.zoom) / 2.0;
+            let host_dir = host_d / host_len;
+            let host_normal = DVec2::new(-host_dir.y, host_dir.x);
+            let host_half_thick = host_wall.thickness / 2.0;
 
             // A point on the host wall's side edge line.
-            let edge_point = egui::pos2(
-                host_start_s.x + host_normal.x * host_half_thick * sign,
-                host_start_s.y + host_normal.y * host_half_thick * sign,
-            );
+            let edge_point = host_wall.start + host_normal * host_half_thick * sign;
 
             for junction in &side_data.junctions {
                 let conn_wall = match walls.iter().find(|w| w.id == junction.wall_id) {
@@ -230,25 +172,14 @@ pub fn compute_joints(
                     None => continue,
                 };
 
-                let conn_start_s = canvas.world_to_screen(
-                    egui::pos2(conn_wall.start.x as f32, conn_wall.start.y as f32),
-                    center,
-                );
-                let conn_end_s = canvas.world_to_screen(
-                    egui::pos2(conn_wall.end.x as f32, conn_wall.end.y as f32),
-                    center,
-                );
-
                 // Junction point on the host wall's side edge.
-                let junc_s = egui::pos2(
-                    host_start_s.x + host_dx * junction.t as f32
-                        + host_normal.x * host_half_thick * sign,
-                    host_start_s.y + host_dy * junction.t as f32
-                        + host_normal.y * host_half_thick * sign,
-                );
+                let junc_pt = host_wall.start + host_d * junction.t
+                    + host_normal * host_half_thick * sign;
 
                 // Determine which end of the connecting wall is at the junction.
-                let is_end = (conn_end_s - junc_s).length() < (conn_start_s - junc_s).length();
+                let start_dist = conn_wall.start.distance(junc_pt);
+                let end_dist = conn_wall.end.distance(junc_pt);
+                let is_end = end_dist < start_dist;
 
                 // Skip if already handled by endpoint junction grouping.
                 if joints.contains_key(&(conn_wall.id, is_end)) {
@@ -256,26 +187,19 @@ pub fn compute_joints(
                 }
 
                 // Connecting wall direction (start→end) and left normal.
-                let conn_dx = conn_end_s.x - conn_start_s.x;
-                let conn_dy = conn_end_s.y - conn_start_s.y;
-                let conn_len = (conn_dx * conn_dx + conn_dy * conn_dy).sqrt();
-                if conn_len < 0.1 {
+                let conn_d = conn_wall.end - conn_wall.start;
+                let conn_len = conn_d.length();
+                if conn_len < 1e-6 {
                     continue;
                 }
 
-                let conn_dir = egui::vec2(conn_dx / conn_len, conn_dy / conn_len);
-                let conn_normal = egui::vec2(-conn_dir.y, conn_dir.x);
-                let conn_half_thick = (conn_wall.thickness as f32 * canvas.zoom) / 2.0;
+                let conn_dir = conn_d / conn_len;
+                let conn_normal = DVec2::new(-conn_dir.y, conn_dir.x);
+                let conn_half_thick = conn_wall.thickness / 2.0;
 
                 // Connecting wall's left/right edge lines (parallel to centerline).
-                let left_edge_pt = egui::pos2(
-                    conn_start_s.x + conn_normal.x * conn_half_thick,
-                    conn_start_s.y + conn_normal.y * conn_half_thick,
-                );
-                let right_edge_pt = egui::pos2(
-                    conn_start_s.x - conn_normal.x * conn_half_thick,
-                    conn_start_s.y - conn_normal.y * conn_half_thick,
-                );
+                let left_edge_pt = conn_wall.start + conn_normal * conn_half_thick;
+                let right_edge_pt = conn_wall.start - conn_normal * conn_half_thick;
 
                 // Intersect each edge with the host wall's side edge line.
                 let left_int = line_line_intersection(left_edge_pt, conn_dir, edge_point, host_dir);
@@ -285,22 +209,16 @@ pub fn compute_joints(
                 let max_dist = conn_half_thick.max(host_half_thick) * MAX_MITER_RATIO;
 
                 // Default vertices (simple perpendicular offset at the junction endpoint).
-                let junc_end_s = if is_end { conn_end_s } else { conn_start_s };
-                let default_left = egui::pos2(
-                    junc_end_s.x + conn_normal.x * conn_half_thick,
-                    junc_end_s.y + conn_normal.y * conn_half_thick,
-                );
-                let default_right = egui::pos2(
-                    junc_end_s.x - conn_normal.x * conn_half_thick,
-                    junc_end_s.y - conn_normal.y * conn_half_thick,
-                );
+                let junc_end = if is_end { conn_wall.end } else { conn_wall.start };
+                let default_left = junc_end + conn_normal * conn_half_thick;
+                let default_right = junc_end - conn_normal * conn_half_thick;
 
                 let left = match left_int {
-                    Some(pt) if (pt - junc_s).length() < max_dist => pt,
+                    Some(pt) if pt.distance(junc_pt) < max_dist => pt,
                     _ => default_left,
                 };
                 let right = match right_int {
-                    Some(pt) if (pt - junc_s).length() < max_dist => pt,
+                    Some(pt) if pt.distance(junc_pt) < max_dist => pt,
                     _ => default_right,
                 };
 
@@ -310,4 +228,164 @@ pub fn compute_joints(
     }
 
     (joints, hubs)
+}
+
+// --- Miter geometry helpers (merged from wall_joints_miter.rs) ---
+
+/// Two-wall miter joint with hub polygon to cover internal outline artifacts.
+fn compute_two_wall_miter(
+    waj_list: &[WallAtJunction],
+    joints: &mut HashMap<(Uuid, bool), JointVertices>,
+    hubs: &mut Vec<HubPolygon>,
+    fill: egui::Color32,
+) {
+    let a = &waj_list[0];
+    let b = &waj_list[1];
+
+    // Junction point (average of the two from-points, which should be ~same).
+    let junction = DVec2::new(
+        (a.left.x + a.right.x + b.left.x + b.right.x) / 4.0,
+        (a.left.y + a.right.y + b.left.y + b.right.y) / 4.0,
+    );
+
+    let max_half = a.half_thick.max(b.half_thick);
+    let max_dist = max_half * MAX_MITER_RATIO;
+
+    // Intersect a.left with b.right and a.right with b.left (cross-side = miter points).
+    let miter_lr = line_line_intersection(a.left, a.dir, b.right, b.dir);
+    let miter_rl = line_line_intersection(a.right, a.dir, b.left, b.dir);
+
+    // Intersect same-side edges (a.left with b.left, a.right with b.right).
+    let ll = line_line_intersection(a.left, a.dir, b.left, b.dir);
+    let rr = line_line_intersection(a.right, a.dir, b.right, b.dir);
+
+    // For wall A:
+    let a_left = match miter_lr {
+        Some(pt) if pt.distance(junction) < max_dist => pt,
+        _ => a.left,
+    };
+    let a_right = match miter_rl {
+        Some(pt) if pt.distance(junction) < max_dist => pt,
+        _ => a.right,
+    };
+
+    // For wall B:
+    let b_left = match miter_rl {
+        Some(pt) if pt.distance(junction) < max_dist => pt,
+        _ => b.left,
+    };
+    let b_right = match miter_lr {
+        Some(pt) if pt.distance(junction) < max_dist => pt,
+        _ => b.right,
+    };
+
+    joints.insert(
+        (a.wall_id, a.is_end),
+        JointVertices { left: a_left, right: a_right },
+    );
+    joints.insert(
+        (b.wall_id, b.is_end),
+        JointVertices { left: b_left, right: b_right },
+    );
+
+    // Build hub polygon from all 4 intersection points to cover the corner area.
+    let candidates = [miter_lr, miter_rl, ll, rr];
+    let mut hub_vertices: Vec<DVec2> = candidates
+        .iter()
+        .filter_map(|opt| {
+            opt.filter(|pt| pt.distance(junction) < max_dist)
+        })
+        .collect();
+
+    if hub_vertices.len() >= 3 {
+        // Sort by angle from centroid to ensure correct polygon winding.
+        let cx = hub_vertices.iter().map(|p| p.x).sum::<f64>() / hub_vertices.len() as f64;
+        let cy = hub_vertices.iter().map(|p| p.y).sum::<f64>() / hub_vertices.len() as f64;
+        hub_vertices.sort_by(|a, b| {
+            let angle_a = (a.y - cy).atan2(a.x - cx);
+            let angle_b = (b.y - cy).atan2(b.x - cx);
+            angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        hubs.push(HubPolygon {
+            vertices: hub_vertices,
+            fill,
+        });
+    }
+}
+
+/// Three+ wall hub polygon.
+fn compute_hub_polygon(
+    waj_list: &[WallAtJunction],
+    joints: &mut HashMap<(Uuid, bool), JointVertices>,
+    hubs: &mut Vec<HubPolygon>,
+    fill: egui::Color32,
+) {
+    let n = waj_list.len();
+    let mut hub_vertices: Vec<DVec2> = Vec::new();
+
+    // Walk walls in angular order (sorted by increasing atan2 angle).
+    // Between consecutive walls i and i+1, the gap is bounded by
+    // wall_i's CW-facing edge and wall_{i+1}'s CCW-facing edge.
+    for i in 0..n {
+        let next = (i + 1) % n;
+        let wa = &waj_list[i];
+        let wb = &waj_list[next];
+
+        let miter = line_line_intersection(wa.cw_edge(), wa.dir, wb.ccw_edge(), wb.dir);
+
+        let max_half = wa.half_thick.max(wb.half_thick);
+        let junction_approx = (wa.cw_edge() + wb.ccw_edge()) / 2.0;
+        let max_dist = max_half * MAX_MITER_RATIO;
+
+        let pt = match miter {
+            Some(p) if p.distance(junction_approx) < max_dist => p,
+            _ => junction_approx,
+        };
+
+        hub_vertices.push(pt);
+    }
+
+    // Set joint vertices: hub[i] is the CW-side miter point for wall i,
+    // hub[prev] is the CCW-side miter point. Map back to left/right
+    // based on is_end.
+    for i in 0..n {
+        let prev = if i == 0 { n - 1 } else { i - 1 };
+        let wa = &waj_list[i];
+        let (left, right) = if wa.is_end {
+            // is_end: CW-facing = right, CCW-facing = left
+            (hub_vertices[prev], hub_vertices[i])
+        } else {
+            // !is_end: CW-facing = left, CCW-facing = right
+            (hub_vertices[i], hub_vertices[prev])
+        };
+        joints.insert(
+            (wa.wall_id, wa.is_end),
+            JointVertices { left, right },
+        );
+    }
+
+    hubs.push(HubPolygon {
+        vertices: hub_vertices,
+        fill,
+    });
+}
+
+/// Intersect two infinite lines: line through `p1` in direction `d1`,
+/// and line through `p2` in direction `d2`.
+/// Returns None if lines are parallel.
+fn line_line_intersection(
+    p1: DVec2,
+    d1: DVec2,
+    p2: DVec2,
+    d2: DVec2,
+) -> Option<DVec2> {
+    let denom = d1.x * d2.y - d1.y * d2.x;
+    if denom.abs() < 1e-10 {
+        return None;
+    }
+    let dx = p2.x - p1.x;
+    let dy = p2.y - p1.y;
+    let t = (dx * d2.y - dy * d2.x) / denom;
+    Some(DVec2::new(p1.x + t * d1.x, p1.y + t * d1.y))
 }

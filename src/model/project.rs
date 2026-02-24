@@ -105,6 +105,26 @@ pub struct Project {
 }
 
 impl Project {
+    pub fn wall(&self, id: Uuid) -> Option<&Wall> {
+        self.walls.iter().find(|w| w.id == id)
+    }
+
+    pub fn wall_mut(&mut self, id: Uuid) -> Option<&mut Wall> {
+        self.walls.iter_mut().find(|w| w.id == id)
+    }
+
+    pub fn opening(&self, id: Uuid) -> Option<&Opening> {
+        self.openings.iter().find(|o| o.id == id)
+    }
+
+    pub fn opening_mut(&mut self, id: Uuid) -> Option<&mut Opening> {
+        self.openings.iter_mut().find(|o| o.id == id)
+    }
+
+    pub fn room(&self, id: Uuid) -> Option<&Room> {
+        self.rooms.iter().find(|r| r.id == id)
+    }
+
     pub fn new(name: String) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -181,5 +201,52 @@ impl Project {
     /// Remove a label by ID.
     pub fn remove_label(&mut self, id: Uuid) {
         self.labels.retain(|l| l.id != id);
+    }
+
+    /// Move an opening to a new wall (or detach it if `new_wall` is `None`).
+    ///
+    /// Handles detach-from-old-wall, update opening fields, attach-to-new-wall.
+    /// Returns the previous `wall_id` (before the move) so the caller can
+    /// manage orphan positions when the opening is detached.
+    pub fn move_opening(
+        &mut self,
+        opening_id: Uuid,
+        new_wall: Option<Uuid>,
+        new_offset: f64,
+    ) -> Option<Uuid> {
+        // Find the old wall id before mutation
+        let old_wall_id = self
+            .openings
+            .iter()
+            .find(|o| o.id == opening_id)
+            .and_then(|o| o.wall_id);
+
+        // Detach from old wall if changing walls
+        if old_wall_id != new_wall {
+            if let Some(prev_wid) = old_wall_id {
+                if let Some(w) = self.walls.iter_mut().find(|w| w.id == prev_wid) {
+                    w.openings.retain(|id| *id != opening_id);
+                }
+            }
+        }
+
+        // Update the opening fields
+        if let Some(opening) = self.openings.iter_mut().find(|o| o.id == opening_id) {
+            opening.wall_id = new_wall;
+            opening.offset_along_wall = new_offset;
+        }
+
+        // Attach to new wall if changing walls
+        if old_wall_id != new_wall {
+            if let Some(new_wid) = new_wall {
+                if let Some(w) = self.walls.iter_mut().find(|w| w.id == new_wid) {
+                    if !w.openings.contains(&opening_id) {
+                        w.openings.push(opening_id);
+                    }
+                }
+            }
+        }
+
+        old_wall_id
     }
 }

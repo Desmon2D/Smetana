@@ -1,5 +1,7 @@
-use crate::editor::room_metrics::compute_room_metrics;
-use crate::model::{Opening, OpeningKind, Room, UnitType, Wall, WallSide};
+use uuid::Uuid;
+
+use crate::model::room_metrics::compute_room_metrics;
+use crate::model::{Opening, OpeningKind, Project, Room, UnitType, Wall, WallSide};
 
 /// Total opening area (mm²) for openings attached to a wall.
 /// Uses the canonical `wall.openings` ID list.
@@ -138,4 +140,20 @@ pub fn room_quantity(unit: UnitType, room: &Room, walls: &[Wall]) -> f64 {
             compute_room_metrics(room, walls).map_or(0.0, |m| m.perimeter / 1000.0)
         }
     }
+}
+
+/// Compute quantity for a service assigned to an object (wall, opening, or room).
+/// For wall services, `wall_side` specifies which side's dimensions to use.
+pub fn compute_object_quantity(project: &Project, unit_type: UnitType, obj_id: Uuid, wall_side: Option<WallSide>) -> f64 {
+    if let Some(wall) = project.walls.iter().find(|w| w.id == obj_id) {
+        let side = wall_side.unwrap_or(WallSide::Left);
+        return wall_side_quantity(unit_type, wall, side, &project.openings);
+    }
+    if let Some(opening) = project.openings.iter().find(|o| o.id == obj_id) {
+        return opening_quantity(unit_type, opening);
+    }
+    if let Some(room) = project.rooms.iter().find(|r| r.id == obj_id) {
+        return room_quantity(unit_type, room, &project.walls);
+    }
+    if unit_type == UnitType::Piece { 1.0 } else { 0.0 }
 }

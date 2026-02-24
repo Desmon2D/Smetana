@@ -12,4 +12,4 @@ Entry point for AI agents working on the Smetana codebase.
 | [`docs/06_STATE_MANAGEMENT.md`](06_STATE_MANAGEMENT.md) | `App` struct fields, editor/project/UI state organization, mutation patterns |
 | [`docs/07_BUILD_AND_TEST.md`](07_BUILD_AND_TEST.md) | Build commands, toolchain requirements, dependencies from `Cargo.toml`, platform notes |
 
-**Quick stats:** 37 source files, ~6,600 lines of Rust. Rust edition 2024. Desktop app using eframe/egui.
+**Quick stats:** 32 source files, ~6,300 lines of Rust. Rust edition 2024. Desktop app using eframe/egui.

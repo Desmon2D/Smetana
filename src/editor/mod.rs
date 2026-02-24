@@ -1,15 +1,11 @@
 pub mod canvas;
-pub mod opening_tool;
+pub mod endpoint_merge;
 pub mod room_detection;
-pub mod room_metrics;
 pub mod snap;
-pub mod triangulation;
 pub mod wall_joints;
-mod wall_joints_miter;
 pub mod wall_tool;
 
 pub use canvas::Canvas;
-pub use opening_tool::OpeningTool;
 pub use room_detection::WallGraph;
 pub use snap::{SnapResult, SnapType, snap};
 pub use wall_tool::{WallTool, WallToolState};
@@ -36,6 +32,26 @@ pub enum Selection {
     Opening(Uuid),
     Room(Uuid),
     Label(Uuid),
+}
+
+/// State for the opening (door/window) placement tool.
+///
+/// Tracks the wall the cursor is currently hovering over
+/// and the computed offset along that wall, used for preview rendering.
+pub struct OpeningTool {
+    /// Wall ID the cursor is currently over (for preview).
+    pub hover_wall_id: Option<Uuid>,
+    /// Offset along the hovered wall in mm (for preview).
+    pub hover_offset: f64,
+}
+
+impl Default for OpeningTool {
+    fn default() -> Self {
+        Self {
+            hover_wall_id: None,
+            hover_offset: 0.0,
+        }
+    }
 }
 
 /// Editor state: active tool, selection, and canvas viewport.

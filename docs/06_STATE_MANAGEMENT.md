@@ -63,6 +63,7 @@
 | `service_picker_target` | `Option<ServiceTarget>` | Target object for service assignment | Set when picker opens |
 | `price_list_filter` | `String` | Filter text in price list window | User typing |
 | `label_scale` | `f32` | Canvas label font size multiplier (0.5–3.0, default 1.0) | Left panel slider |
+| `rooms_version` | `u64` | History version at last room detection run; gates re-detection | `show_canvas()`, reset on project load/create |
 
 ### Persistence Tracking
 
@@ -113,11 +114,11 @@ Used for room names, service assignments, service picker.
 4. auto_save() detects version change → saves
 ```
 
-### Pattern 4: Room Detection (Computed, Every Frame)
+### Pattern 4: Room Detection (Computed, Version-Gated)
 
 ```
-1. show_canvas() runs every frame
-2. WallGraph::build(&project.walls) → detect_rooms() → new_rooms
+1. show_canvas() checks: history.version != rooms_version
+2. If changed: WallGraph::build(&project.walls) → detect_rooms() → new_rooms
 3. merge_rooms(new_rooms):
    → Match new rooms to existing rooms by sorted wall_ids
    → Preserve id, name, and services of matched rooms

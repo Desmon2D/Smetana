@@ -25,26 +25,26 @@
 └──────┬──────────────┬──────────────┬───────────────┬────────────┘
        │              │              │               │
        ▼              ▼              ▼               ▼
-┌────────────┐ ┌────────────┐ ┌───────────┐ ┌──────────────┐
-│  editor/   │ │  model/    │ │ history.rs│ │ persistence/ │
-│            │ │            │ │           │ │              │
-│ Canvas     │ │ Wall       │ │ History   │ │ project_io   │
-│ WallTool   │ │ Opening    │ │ (snapshot │ │ price_io     │
-│ OpeningTool│ │ Room       │ │  undo/    │ │              │
-│ Snap       │ │ Label      │ │  redo)    │ │ saves/       │
-│ RoomDetect │ │ Project    │ │           │ │  projects/   │
-│ RoomMetrics│ │ PriceList  │ │           │ │  prices/     │
-│ WallJoints │ │ Quantity   │ │           │ │              │
-│ Triangulate│ │            │ │           │ │              │
-└────────────┘ └────────────┘ └───────────┘ └──────────────┘
-                                                   │
-                                                   ▼
-                                           ┌──────────────┐
-                                           │   export/    │
-                                           │  excel.rs    │
-                                           │  excel_sheets│
-                                           │  (.xlsx)     │
-                                           └──────────────┘
+┌────────────┐ ┌────────────┐ ┌──────────────┐ ┌──────────────┐
+│  editor/   │ │  model/    │ │ app/         │ │persistence.rs│
+│            │ │            │ │ history.rs   │ │              │
+│ Canvas     │ │ Wall       │ │              │ │ save/load    │
+│ WallTool   │ │ Opening    │ │ History      │ │ project &    │
+│ OpeningTool│ │ Room       │ │ (snapshot    │ │ price list   │
+│ Snap       │ │ Label      │ │  undo/redo)  │ │              │
+│ RoomDetect │ │ Project    │ │              │ │ saves/       │
+│ WallJoints │ │ PriceList  │ │              │ │  projects/   │
+│ EndpointMrg│ │ Quantity   │ │              │ │  prices/     │
+│            │ │ RoomMetrics│ │              │ │              │
+└────────────┘ └────────────┘ └──────────────┘ └──────────────┘
+                                                     │
+                                                     ▼
+                                             ┌──────────────┐
+                                             │   export/    │
+                                             │  excel.rs    │
+                                             │  excel_sheets│
+                                             │  (.xlsx)     │
+                                             └──────────────┘
 ```
 
 ## Data Flow: User Input → State Mutation → Rendering
@@ -94,7 +94,8 @@ show_canvas():
      │   └── Click → snapshot + project.add_opening(opening)
      └── Label tool:
          └── Click → snapshot + project.labels.push(label)
-  5. Room detection: WallGraph::build() (incl. T-junction vertex merge) → detect_rooms() → merge_rooms()
+  5. Room detection (version-gated: only when history.version != rooms_version):
+     WallGraph::build() (uses merge_endpoints() + T-junction vertex merge) → detect_rooms() → merge_rooms()
   6. Drawing:
      ├── draw_rooms()          ← triangulated fill + name/area labels
      ├── draw_walls()          ← pass 1: opaque section quads, joints, outline; pass 2: overlays

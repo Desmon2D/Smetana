@@ -1,9 +1,70 @@
 use eframe::egui;
 
 use crate::editor::Selection;
-use crate::editor::room_metrics::compute_room_metrics;
-use crate::model::{OpeningKind, TargetObjectType, WallSide, section_net_area};
-use super::{App, ServiceTarget};
+use crate::model::room_metrics::compute_room_metrics;
+use crate::model::{Opening, OpeningKind, SideData, TargetObjectType, Wall, WallSide, section_net_area};
+use super::{App, ServiceTarget, property_edits};
+
+struct SideInfo {
+    has_junctions: bool,
+    total_length: f64,
+    avg_height: f64,
+    gross_m2: f64,
+    net_m2: f64,
+    section_net_areas: Vec<f64>,
+}
+
+impl SideInfo {
+    fn compute(wall: &Wall, side: WallSide, openings: &[Opening], walls: &[Wall]) -> Self {
+        let side_data = match side {
+            WallSide::Left => &wall.left_side,
+            WallSide::Right => &wall.right_side,
+        };
+        let section_nets: Vec<f64> = (0..side_data.sections.len())
+            .map(|i| section_net_area(wall, side, i, openings))
+            .collect();
+        let gross = side_data.computed_gross_area();
+        let open_area = crate::model::opening_area_mm2(wall, openings);
+        SideInfo {
+            has_junctions: !side_data.junctions.is_empty(),
+            total_length: side_data.computed_total_length(walls),
+            avg_height: side_data.average_height(),
+            gross_m2: gross / 1_000_000.0,
+            net_m2: (gross - open_area).max(0.0) / 1_000_000.0,
+            section_net_areas: section_nets,
+        }
+    }
+
+    fn empty() -> Self {
+        SideInfo {
+            has_junctions: false,
+            total_length: 0.0,
+            avg_height: 0.0,
+            gross_m2: 0.0,
+            net_m2: 0.0,
+            section_net_areas: Vec::new(),
+        }
+    }
+}
+
+fn show_side_panel(
+    ui: &mut egui::Ui,
+    side_data: &mut SideData,
+    info: &SideInfo,
+    side_label: &str,
+    side_id: &str,
+    color_offset: usize,
+) {
+    ui.label(side_label);
+    ui.indent(format!("{side_id}_side"), |ui| {
+        let len = if info.has_junctions { info.total_length } else { side_data.length };
+        property_edits::labeled_value(ui, "Длина (мм):", format!("{:.0}", len));
+        property_edits::labeled_value(ui, "Средняя высота (мм):", format!("{:.0}", info.avg_height));
+        property_edits::labeled_value(ui, "Площадь (брутто):", format!("{:.2} м²", info.gross_m2));
+        property_edits::labeled_value(ui, "Площадь (нетто):", format!("{:.2} м²", info.net_m2));
+        App::show_side_sections(ui, side_data, side_id, &info.section_net_areas, color_offset);
+    });
+}
 
 impl App {
     pub(super) fn show_right_panel(&mut self, ctx: &egui::Context) {
@@ -36,74 +97,21 @@ impl App {
     }
 
     fn show_wall_properties(&mut self, ui: &mut egui::Ui, id: uuid::Uuid) {
-        struct SideInfo {
-            has_junctions: bool,
-            total_length: f64,
-            avg_height: f64,
-            gross_m2: f64,
-            net_m2: f64,
-            section_net_areas: Vec<f64>,
-        }
         let (left_info, right_info) =
-            if let Some(w) = self.project.walls.iter().find(|w| w.id == id) {
-                let left_section_nets: Vec<f64> = (0..w.left_side.sections.len())
-                    .map(|i| section_net_area(w, WallSide::Left, i, &self.project.openings))
-                    .collect();
-                let right_section_nets: Vec<f64> = (0..w.right_side.sections.len())
-                    .map(|i| section_net_area(w, WallSide::Right, i, &self.project.openings))
-                    .collect();
-                let left_gross = w.left_side.computed_gross_area();
-                let open_area = crate::model::opening_area_mm2(w, &self.project.openings);
-                let right_gross = w.right_side.computed_gross_area();
+            if let Some(w) = self.project.wall(id) {
                 (
-                    SideInfo {
-                        has_junctions: !w.left_side.junctions.is_empty(),
-                        total_length: w.left_side.computed_total_length(&self.project.walls),
-                        avg_height: w.left_side.average_height(),
-                        gross_m2: left_gross / 1_000_000.0,
-                        net_m2: (left_gross - open_area).max(0.0) / 1_000_000.0,
-                        section_net_areas: left_section_nets,
-                    },
-                    SideInfo {
-                        has_junctions: !w.right_side.junctions.is_empty(),
-                        total_length: w.right_side.computed_total_length(&self.project.walls),
-                        avg_height: w.right_side.average_height(),
-                        gross_m2: right_gross / 1_000_000.0,
-                        net_m2: (right_gross - open_area).max(0.0) / 1_000_000.0,
-                        section_net_areas: right_section_nets,
-                    },
+                    SideInfo::compute(w, WallSide::Left, &self.project.openings, &self.project.walls),
+                    SideInfo::compute(w, WallSide::Right, &self.project.openings, &self.project.walls),
                 )
             } else {
-                let empty = SideInfo {
-                    has_junctions: false,
-                    total_length: 0.0,
-                    avg_height: 0.0,
-                    gross_m2: 0.0,
-                    net_m2: 0.0,
-                    section_net_areas: Vec::new(),
-                };
-                (empty, SideInfo {
-                    has_junctions: false,
-                    total_length: 0.0,
-                    avg_height: 0.0,
-                    gross_m2: 0.0,
-                    net_m2: 0.0,
-                    section_net_areas: Vec::new(),
-                })
+                (SideInfo::empty(), SideInfo::empty())
             };
 
-        if let Some(wall) = self.project.walls.iter_mut().find(|w| w.id == id) {
+        if let Some(wall) = self.project.wall_mut(id) {
             ui.label("Стена");
             ui.add_space(8.0);
 
-            ui.horizontal(|ui| {
-                ui.label("Толщина (мм):");
-                ui.add(
-                    egui::DragValue::new(&mut wall.thickness)
-                        .range(10.0..=1000.0)
-                        .speed(5.0),
-                );
-            });
+            property_edits::labeled_drag(ui, "Толщина (мм):", &mut wall.thickness, 10.0..=1000.0, 5.0);
 
             let length_mm = wall.length();
             let length_label = if length_mm >= 1000.0 {
@@ -111,10 +119,7 @@ impl App {
             } else {
                 format!("{:.0} мм", length_mm)
             };
-            ui.horizontal(|ui| {
-                ui.label("Длина (графика):");
-                ui.label(length_label);
-            });
+            property_edits::labeled_value(ui, "Длина (графика):", length_label);
 
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -129,57 +134,9 @@ impl App {
 
             let left_section_count = wall.left_side.sections.len();
 
-            ui.label("Левая сторона");
-            ui.indent("left_side", |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Длина (мм):");
-                    if left_info.has_junctions {
-                        ui.label(format!("{:.0}", left_info.total_length));
-                    } else {
-                        ui.label(format!("{:.0}", wall.left_side.length));
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Средняя высота (мм):");
-                    ui.label(format!("{:.0}", left_info.avg_height));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Площадь (брутто):");
-                    ui.label(format!("{:.2} м²", left_info.gross_m2));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Площадь (нетто):");
-                    ui.label(format!("{:.2} м²", left_info.net_m2));
-                });
-                Self::show_side_sections(ui, &mut wall.left_side, "left", &left_info.section_net_areas, 0);
-            });
-
+            show_side_panel(ui, &mut wall.left_side, &left_info, "Левая сторона", "left", 0);
             ui.add_space(4.0);
-
-            ui.label("Правая сторона");
-            ui.indent("right_side", |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Длина (мм):");
-                    if right_info.has_junctions {
-                        ui.label(format!("{:.0}", right_info.total_length));
-                    } else {
-                        ui.label(format!("{:.0}", wall.right_side.length));
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Средняя высота (мм):");
-                    ui.label(format!("{:.0}", right_info.avg_height));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Площадь (брутто):");
-                    ui.label(format!("{:.2} м²", right_info.gross_m2));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Площадь (нетто):");
-                    ui.label(format!("{:.2} м²", right_info.net_m2));
-                });
-                Self::show_side_sections(ui, &mut wall.right_side, "right", &right_info.section_net_areas, left_section_count);
-            });
+            show_side_panel(ui, &mut wall.right_side, &right_info, "Правая сторона", "right", left_section_count);
 
             ui.add_space(8.0);
             ui.separator();
@@ -190,7 +147,7 @@ impl App {
             self.editor.selection = Selection::None;
         }
 
-        if let Some(wall) = self.project.walls.iter().find(|w| w.id == id) {
+        if let Some(wall) = self.project.wall(id) {
             let left_section_count = wall.left_side.sections.len();
             self.show_wall_side_services(ui, id, WallSide::Left, "Левая сторона", 0);
             ui.add_space(4.0);
@@ -201,25 +158,19 @@ impl App {
     fn show_opening_properties(&mut self, ui: &mut egui::Ui, id: uuid::Uuid) {
         let errors: Vec<&str> = self
             .project
-            .openings
-            .iter()
-            .find(|o| o.id == id)
+            .opening(id)
             .map(|o| self.opening_errors(o))
             .unwrap_or_default();
 
         let wall_thickness: Option<f64> = self
             .project
-            .openings
-            .iter()
-            .find(|o| o.id == id)
+            .opening(id)
             .and_then(|o| o.wall_id)
-            .and_then(|wid| {
-                self.project.walls.iter().find(|w| w.id == wid)
-            })
+            .and_then(|wid| self.project.wall(wid))
             .map(|w| w.thickness);
 
         if let Some(opening) =
-            self.project.openings.iter_mut().find(|o| o.id == id)
+            self.project.opening_mut(id)
         {
             let label = match &opening.kind {
                 OpeningKind::Door { .. } => "Дверь",
@@ -240,27 +191,10 @@ impl App {
 
             match &mut opening.kind {
                 OpeningKind::Door { height, width } => {
-                    ui.horizontal(|ui| {
-                        ui.label("Высота (мм):");
-                        ui.add(
-                            egui::DragValue::new(height)
-                                .range(500.0..=3500.0)
-                                .speed(10.0),
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Ширина (мм):");
-                        ui.add(
-                            egui::DragValue::new(width)
-                                .range(300.0..=3000.0)
-                                .speed(10.0),
-                        );
-                    });
+                    property_edits::labeled_drag(ui, "Высота (мм):", height, 500.0..=3500.0, 10.0);
+                    property_edits::labeled_drag(ui, "Ширина (мм):", width, 300.0..=3000.0, 10.0);
                     if let Some(thick) = wall_thickness {
-                        ui.horizontal(|ui| {
-                            ui.label("Глубина (мм):");
-                            ui.label(format!("{:.0}", thick));
-                        });
+                        property_edits::labeled_value(ui, "Глубина (мм):", format!("{:.0}", thick));
                     }
                 }
                 OpeningKind::Window {
@@ -269,38 +203,10 @@ impl App {
                     sill_height,
                     reveal_width,
                 } => {
-                    ui.horizontal(|ui| {
-                        ui.label("Высота (мм):");
-                        ui.add(
-                            egui::DragValue::new(height)
-                                .range(200.0..=3000.0)
-                                .speed(10.0),
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Ширина (мм):");
-                        ui.add(
-                            egui::DragValue::new(width)
-                                .range(200.0..=5000.0)
-                                .speed(10.0),
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Подоконник (мм):");
-                        ui.add(
-                            egui::DragValue::new(sill_height)
-                                .range(0.0..=2500.0)
-                                .speed(10.0),
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Откос (мм):");
-                        ui.add(
-                            egui::DragValue::new(reveal_width)
-                                .range(0.0..=500.0)
-                                .speed(5.0),
-                        );
-                    });
+                    property_edits::labeled_drag(ui, "Высота (мм):", height, 200.0..=3000.0, 10.0);
+                    property_edits::labeled_drag(ui, "Ширина (мм):", width, 200.0..=5000.0, 10.0);
+                    property_edits::labeled_drag(ui, "Подоконник (мм):", sill_height, 0.0..=2500.0, 10.0);
+                    property_edits::labeled_drag(ui, "Откос (мм):", reveal_width, 0.0..=500.0, 5.0);
                 }
             }
         } else {
@@ -308,7 +214,7 @@ impl App {
             self.editor.selection = Selection::None;
         }
 
-        if let Some(opening) = self.project.openings.iter().find(|o| o.id == id) {
+        if let Some(opening) = self.project.opening(id) {
             ui.add_space(8.0);
             ui.separator();
             ui.strong("Услуги");
@@ -317,7 +223,7 @@ impl App {
             let svcs = self.project.opening_services.get(&id)
                 .map(|v| v.as_slice()).unwrap_or(&[]);
             let rows = self.build_assigned_rows_for(svcs, |ut| {
-                self.compute_opening_quantity(ut, opening)
+                crate::model::opening_quantity(ut, opening)
             });
             let target = ServiceTarget::Opening { opening_id: id };
             self.show_flat_services(
@@ -332,9 +238,7 @@ impl App {
     fn show_room_properties(&mut self, ui: &mut egui::Ui, id: uuid::Uuid) {
         let metrics = self
             .project
-            .rooms
-            .iter()
-            .find(|r| r.id == id)
+            .room(id)
             .and_then(|r| compute_room_metrics(r, &self.project.walls));
 
         if let Some(room) =
@@ -353,31 +257,19 @@ impl App {
             ui.add_space(4.0);
 
             if let Some(m) = &metrics {
-                ui.horizontal(|ui| {
-                    ui.label("Площадь (брутто):");
-                    ui.label(format!("{:.2} м²", m.gross_area / 1_000_000.0));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Площадь (нетто):");
-                    ui.label(format!("{:.2} м²", m.net_area / 1_000_000.0));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Периметр:");
-                    ui.label(format!("{:.2} м", m.perimeter / 1000.0));
-                });
+                property_edits::labeled_value(ui, "Площадь (брутто):", format!("{:.2} м²", m.gross_area / 1_000_000.0));
+                property_edits::labeled_value(ui, "Площадь (нетто):", format!("{:.2} м²", m.net_area / 1_000_000.0));
+                property_edits::labeled_value(ui, "Периметр:", format!("{:.2} м", m.perimeter / 1000.0));
             }
 
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("Стен в контуре:");
-                ui.label(format!("{}", room.wall_ids.len()));
-            });
+            property_edits::labeled_value(ui, "Стен в контуре:", format!("{}", room.wall_ids.len()));
         } else {
             ui.label("Комната не найдена");
             self.editor.selection = Selection::None;
         }
 
-        if let Some(room) = self.project.rooms.iter().find(|r| r.id == id) {
+        if let Some(room) = self.project.room(id) {
             ui.add_space(8.0);
             ui.separator();
             ui.strong("Услуги");
@@ -385,8 +277,9 @@ impl App {
 
             let svcs = self.project.room_services.get(&id)
                 .map(|v| v.as_slice()).unwrap_or(&[]);
+            let walls = &self.project.walls;
             let rows = self.build_assigned_rows_for(svcs, |ut| {
-                self.compute_room_quantity(ut, room)
+                crate::model::room_quantity(ut, room, walls)
             });
             let target = ServiceTarget::Room { room_id: id };
             self.show_flat_services(
@@ -422,26 +315,12 @@ impl App {
                 }
             });
 
-            ui.horizontal(|ui| {
-                ui.label("Размер шрифта:");
-                ui.add(
-                    egui::DragValue::new(&mut label.font_size)
-                        .range(6.0..=72.0)
-                        .speed(0.5),
-                );
-            });
+            property_edits::labeled_drag(ui, "Размер шрифта:", &mut label.font_size, 6.0..=72.0, 0.5);
 
             let mut rotation_deg = label.rotation.to_degrees();
-            ui.horizontal(|ui| {
-                ui.label("Поворот (°):");
-                if ui.add(
-                    egui::DragValue::new(&mut rotation_deg)
-                        .range(0.0..=360.0)
-                        .speed(1.0),
-                ).changed() {
-                    label.rotation = rotation_deg.to_radians();
-                }
-            });
+            if property_edits::labeled_drag(ui, "Поворот (°):", &mut rotation_deg, 0.0..=360.0, 1.0) {
+                label.rotation = rotation_deg.to_radians();
+            }
         } else {
             ui.label("Подпись не найдена");
             self.editor.selection = Selection::None;

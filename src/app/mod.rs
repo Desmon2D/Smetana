@@ -2,10 +2,11 @@ use eframe::egui;
 
 use crate::editor::EditorState;
 use crate::editor::EditorTool;
-use crate::history::History;
+use history::History;
 use crate::model::{PriceList, Project, ProjectDefaults, Room, WallSide};
 use crate::persistence::{list_project_entries, load_project, save_project, ProjectEntry};
 
+mod history;
 mod canvas;
 mod canvas_draw;
 mod price_list;
@@ -63,6 +64,7 @@ pub struct App {
     price_list_filter: String,
     last_saved_version: u64,
     label_scale: f32,
+    rooms_version: u64,
 }
 
 impl App {
@@ -92,6 +94,7 @@ impl App {
             price_list_filter: String::new(),
             last_saved_version: 0,
             label_scale: 1.0,
+            rooms_version: 0,
         }
     }
 
@@ -110,6 +113,7 @@ impl App {
                 self.edit_snapshot_version = None;
                 self.status_message = None;
                 self.last_saved_version = 0;
+                self.rooms_version = 0;
                 self.screen = AppScreen::Editor;
             }
             Err(e) => {
@@ -149,6 +153,7 @@ impl App {
         self.edit_snapshot_version = None;
         self.status_message = None;
         self.last_saved_version = 0;
+        self.rooms_version = 0;
         self.screen = AppScreen::Editor;
     }
 

@@ -57,6 +57,14 @@ impl OpeningKind {
             OpeningKind::Window { height, .. } => *height,
         }
     }
+
+    /// Returns the target object type for service assignment filtering.
+    pub fn target_type(&self) -> crate::model::price::TargetObjectType {
+        match self {
+            OpeningKind::Door { .. } => crate::model::price::TargetObjectType::Door,
+            OpeningKind::Window { .. } => crate::model::price::TargetObjectType::Window,
+        }
+    }
 }
 
 /// An opening (door or window) placed on a wall.

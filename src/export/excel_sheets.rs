@@ -1,32 +1,20 @@
-use rust_xlsxwriter::{Format, Worksheet};
+use rust_xlsxwriter::Worksheet;
 use uuid::Uuid;
 
-use crate::editor::room_metrics::compute_room_metrics;
-use crate::model::{AssignedService, OpeningKind, PriceList, Project, UnitType, WallSide,
-                   opening_area_mm2, wall_side_quantity, wall_section_quantity, opening_quantity, room_quantity};
+use crate::model::room_metrics::compute_room_metrics;
+use crate::model::{AssignedService, OpeningKind, PriceList, Project, Room, WallSide,
+                   opening_area_mm2, wall_section_quantity, compute_object_quantity};
+use super::excel::{ExcelFormats, write_str, write_num, write_header_row};
+
+// ---------------------------------------------------------------------------
+// Sheet 1: Помещения (Rooms)
+// ---------------------------------------------------------------------------
 
 pub(super) fn write_rooms_sheet(
     sheet: &mut Worksheet,
     project: &Project,
-    fmt_header: &Format,
-    fmt_text: &Format,
-    fmt_number: &Format,
-    fmt_section: &Format,
+    fmts: &ExcelFormats,
 ) -> Result<(), String> {
-    // Write header row
-    let room_headers = [
-        "Помещение",
-        "Площадь пола (м²)",
-        "Периметр (м)",
-        "Площадь стен брутто (м²)",
-        "Площадь стен нетто (м²)",
-    ];
-    for (col, header) in room_headers.iter().enumerate() {
-        sheet
-            .write_string_with_format(0, col as u16, *header, fmt_header)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-    }
-
     // Set reasonable column widths
     sheet.set_column_width(0, 20).ok();
     sheet.set_column_width(1, 18).ok();
@@ -34,8 +22,46 @@ pub(super) fn write_rooms_sheet(
     sheet.set_column_width(3, 24).ok();
     sheet.set_column_width(4, 24).ok();
 
-    // Write summary data rows
-    let mut row: u32 = 1;
+    // Summary table
+    let mut row = write_rooms_summary(sheet, project, fmts, 0)?;
+
+    // Per-room detail breakdown
+    row += 1; // blank row after summary
+    for room in &project.rooms {
+        // Section header: "Помещение: <name>"
+        write_str(sheet, row, 0, &format!("Помещение: {}", room.name), &fmts.section)?;
+        row += 1;
+
+        // Walls sub-table
+        row = write_room_walls_detail(sheet, room, project, fmts, row)?;
+
+        // Windows sub-table
+        row = write_room_windows_detail(sheet, room, project, fmts, row)?;
+
+        row += 1; // spacing between rooms
+    }
+
+    Ok(())
+}
+
+/// Write the rooms summary table (header + one row per room).
+/// Returns the next row after the summary.
+fn write_rooms_summary(
+    sheet: &mut Worksheet,
+    project: &Project,
+    fmts: &ExcelFormats,
+    start_row: u32,
+) -> Result<u32, String> {
+    let headers = [
+        "Помещение",
+        "Площадь пола (м²)",
+        "Периметр (м)",
+        "Площадь стен брутто (м²)",
+        "Площадь стен нетто (м²)",
+    ];
+    write_header_row(sheet, start_row, &headers, &fmts.header)?;
+
+    let mut row = start_row + 1;
     for room in &project.rooms {
         let metrics = compute_room_metrics(room, &project.walls);
         let floor_area_m2 = metrics.as_ref().map_or(0.0, |m| m.net_area / 1e6);
@@ -45,201 +71,165 @@ pub(super) fn write_rooms_sheet(
         let mut gross_area_mm2 = 0.0;
         let mut net_area_mm2 = 0.0;
         for (wi, wall_id) in room.wall_ids.iter().enumerate() {
-            if let Some(wall) = project.walls.iter().find(|w| w.id == *wall_id) {
+            if let Some(wall) = project.wall(*wall_id) {
                 let side = match room.wall_sides[wi] {
                     WallSide::Left => &wall.left_side,
                     WallSide::Right => &wall.right_side,
                 };
                 let ga = side.gross_area();
                 gross_area_mm2 += ga;
-
-                // Subtract openings on this wall
                 net_area_mm2 += ga - opening_area_mm2(wall, &project.openings);
             }
         }
 
-        sheet
-            .write_string_with_format(row, 0, &room.name, fmt_text)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        sheet
-            .write_number_with_format(row, 1, floor_area_m2, fmt_number)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        sheet
-            .write_number_with_format(row, 2, perimeter_m, fmt_number)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        sheet
-            .write_number_with_format(row, 3, gross_area_mm2 / 1e6, fmt_number)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        sheet
-            .write_number_with_format(row, 4, net_area_mm2 / 1e6, fmt_number)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
+        write_str(sheet, row, 0, &room.name, &fmts.text)?;
+        write_num(sheet, row, 1, floor_area_m2, &fmts.number)?;
+        write_num(sheet, row, 2, perimeter_m, &fmts.number)?;
+        write_num(sheet, row, 3, gross_area_mm2 / 1e6, &fmts.number)?;
+        write_num(sheet, row, 4, net_area_mm2 / 1e6, &fmts.number)?;
 
         row += 1;
     }
 
-    // Per-room detail breakdown
-    row += 1; // blank row after summary
-    for room in &project.rooms {
-        // Section header: "Помещение: <name>"
-        sheet
-            .write_string_with_format(row, 0, &format!("Помещение: {}", room.name), fmt_section)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        row += 1;
-
-        // --- Walls sub-table ---
-        sheet
-            .write_string_with_format(row, 0, "Стены", fmt_section)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        row += 1;
-
-        let wall_sub_headers = [
-            "Стена",
-            "Сторона",
-            "Высота нач. (мм)",
-            "Высота кон. (мм)",
-            "Длина (мм)",
-            "Толщина (мм)",
-            "Площадь брутто (м²)",
-            "Площадь нетто (м²)",
-        ];
-        for (col, header) in wall_sub_headers.iter().enumerate() {
-            sheet
-                .write_string_with_format(row, col as u16, *header, fmt_header)
-                .map_err(|e| format!("Ошибка записи: {e}"))?;
-        }
-        row += 1;
-
-        for (wi, wall_id) in room.wall_ids.iter().enumerate() {
-            if let Some(wall) = project.walls.iter().find(|w| w.id == *wall_id) {
-                let side = match room.wall_sides[wi] {
-                    WallSide::Left => &wall.left_side,
-                    WallSide::Right => &wall.right_side,
-                };
-                let side_label = match room.wall_sides[wi] {
-                    WallSide::Left => "лев.",
-                    WallSide::Right => "прав.",
-                };
-                let label = format!("С{}", wi + 1);
-                let ga = side.gross_area();
-                let na = ga - opening_area_mm2(wall, &project.openings);
-
-                sheet
-                    .write_string_with_format(row, 0, &label, fmt_text)
-                    .map_err(|e| format!("Ошибка записи: {e}"))?;
-                sheet
-                    .write_string_with_format(row, 1, side_label, fmt_text)
-                    .map_err(|e| format!("Ошибка записи: {e}"))?;
-                sheet
-                    .write_number_with_format(row, 2, side.height_start, fmt_number)
-                    .map_err(|e| format!("Ошибка записи: {e}"))?;
-                sheet
-                    .write_number_with_format(row, 3, side.height_end, fmt_number)
-                    .map_err(|e| format!("Ошибка записи: {e}"))?;
-                sheet
-                    .write_number_with_format(row, 4, side.length, fmt_number)
-                    .map_err(|e| format!("Ошибка записи: {e}"))?;
-                sheet
-                    .write_number_with_format(row, 5, wall.thickness, fmt_number)
-                    .map_err(|e| format!("Ошибка записи: {e}"))?;
-                sheet
-                    .write_number_with_format(row, 6, ga / 1e6, fmt_number)
-                    .map_err(|e| format!("Ошибка записи: {e}"))?;
-                sheet
-                    .write_number_with_format(row, 7, na / 1e6, fmt_number)
-                    .map_err(|e| format!("Ошибка записи: {e}"))?;
-
-                row += 1;
-            }
-        }
-
-        // --- Windows sub-table ---
-        // Collect windows on this room's walls
-        let windows: Vec<_> = room
-            .wall_ids
-            .iter()
-            .flat_map(|wid| {
-                project
-                    .openings
-                    .iter()
-                    .filter(move |o| o.wall_id == Some(*wid))
-                    .filter(|o| matches!(o.kind, OpeningKind::Window { .. }))
-            })
-            .collect();
-
-        if !windows.is_empty() {
-            row += 1; // spacing
-            sheet
-                .write_string_with_format(row, 0, "Окна", fmt_section)
-                .map_err(|e| format!("Ошибка записи: {e}"))?;
-            row += 1;
-
-            let win_sub_headers = [
-                "Окно",
-                "Высота (мм)",
-                "Ширина (мм)",
-                "Откос (мм)",
-                "Высота подоконника (мм)",
-                "Периметр откоса (м)",
-                "Площадь откоса (м²)",
-            ];
-            for (col, header) in win_sub_headers.iter().enumerate() {
-                sheet
-                    .write_string_with_format(row, col as u16, *header, fmt_header)
-                    .map_err(|e| format!("Ошибка записи: {e}"))?;
-            }
-            row += 1;
-
-            for (oi, opening) in windows.iter().enumerate() {
-                if let OpeningKind::Window {
-                    height,
-                    width,
-                    sill_height,
-                    reveal_width,
-                } = &opening.kind
-                {
-                    let label = format!("О{}", oi + 1);
-                    let reveal_perim_mm = 2.0 * height + 2.0 * width;
-                    let reveal_area_mm2 = reveal_perim_mm * reveal_width;
-
-                    sheet
-                        .write_string_with_format(row, 0, &label, fmt_text)
-                        .map_err(|e| format!("Ошибка записи: {e}"))?;
-                    sheet
-                        .write_number_with_format(row, 1, *height, fmt_number)
-                        .map_err(|e| format!("Ошибка записи: {e}"))?;
-                    sheet
-                        .write_number_with_format(row, 2, *width, fmt_number)
-                        .map_err(|e| format!("Ошибка записи: {e}"))?;
-                    sheet
-                        .write_number_with_format(row, 3, *reveal_width, fmt_number)
-                        .map_err(|e| format!("Ошибка записи: {e}"))?;
-                    sheet
-                        .write_number_with_format(row, 4, *sill_height, fmt_number)
-                        .map_err(|e| format!("Ошибка записи: {e}"))?;
-                    sheet
-                        .write_number_with_format(row, 5, reveal_perim_mm / 1e3, fmt_number)
-                        .map_err(|e| format!("Ошибка записи: {e}"))?;
-                    sheet
-                        .write_number_with_format(row, 6, reveal_area_mm2 / 1e6, fmt_number)
-                        .map_err(|e| format!("Ошибка записи: {e}"))?;
-
-                    row += 1;
-                }
-            }
-        }
-
-        row += 1; // spacing between rooms
-    }
-
-    Ok(())
+    Ok(row)
 }
+
+/// Write the wall detail sub-table for a single room.
+/// Returns the next row after the sub-table.
+fn write_room_walls_detail(
+    sheet: &mut Worksheet,
+    room: &Room,
+    project: &Project,
+    fmts: &ExcelFormats,
+    start_row: u32,
+) -> Result<u32, String> {
+    let mut row = start_row;
+
+    write_str(sheet, row, 0, "Стены", &fmts.section)?;
+    row += 1;
+
+    let wall_sub_headers = [
+        "Стена",
+        "Сторона",
+        "Высота нач. (мм)",
+        "Высота кон. (мм)",
+        "Длина (мм)",
+        "Толщина (мм)",
+        "Площадь брутто (м²)",
+        "Площадь нетто (м²)",
+    ];
+    write_header_row(sheet, row, &wall_sub_headers, &fmts.header)?;
+    row += 1;
+
+    for (wi, wall_id) in room.wall_ids.iter().enumerate() {
+        if let Some(wall) = project.wall(*wall_id) {
+            let side = match room.wall_sides[wi] {
+                WallSide::Left => &wall.left_side,
+                WallSide::Right => &wall.right_side,
+            };
+            let side_label = match room.wall_sides[wi] {
+                WallSide::Left => "лев.",
+                WallSide::Right => "прав.",
+            };
+            let label = format!("С{}", wi + 1);
+            let ga = side.gross_area();
+            let na = ga - opening_area_mm2(wall, &project.openings);
+
+            write_str(sheet, row, 0, &label, &fmts.text)?;
+            write_str(sheet, row, 1, side_label, &fmts.text)?;
+            write_num(sheet, row, 2, side.height_start, &fmts.number)?;
+            write_num(sheet, row, 3, side.height_end, &fmts.number)?;
+            write_num(sheet, row, 4, side.length, &fmts.number)?;
+            write_num(sheet, row, 5, wall.thickness, &fmts.number)?;
+            write_num(sheet, row, 6, ga / 1e6, &fmts.number)?;
+            write_num(sheet, row, 7, na / 1e6, &fmts.number)?;
+
+            row += 1;
+        }
+    }
+
+    Ok(row)
+}
+
+/// Write the window detail sub-table for a single room.
+/// Returns the next row after the sub-table.
+fn write_room_windows_detail(
+    sheet: &mut Worksheet,
+    room: &Room,
+    project: &Project,
+    fmts: &ExcelFormats,
+    start_row: u32,
+) -> Result<u32, String> {
+    let mut row = start_row;
+
+    // Collect windows on this room's walls
+    let windows: Vec<_> = room
+        .wall_ids
+        .iter()
+        .flat_map(|wid| {
+            project
+                .openings
+                .iter()
+                .filter(move |o| o.wall_id == Some(*wid))
+                .filter(|o| matches!(o.kind, OpeningKind::Window { .. }))
+        })
+        .collect();
+
+    if windows.is_empty() {
+        return Ok(row);
+    }
+
+    row += 1; // spacing
+    write_str(sheet, row, 0, "Окна", &fmts.section)?;
+    row += 1;
+
+    let win_sub_headers = [
+        "Окно",
+        "Высота (мм)",
+        "Ширина (мм)",
+        "Откос (мм)",
+        "Высота подоконника (мм)",
+        "Периметр откоса (м)",
+        "Площадь откоса (м²)",
+    ];
+    write_header_row(sheet, row, &win_sub_headers, &fmts.header)?;
+    row += 1;
+
+    for (oi, opening) in windows.iter().enumerate() {
+        if let OpeningKind::Window {
+            height,
+            width,
+            sill_height,
+            reveal_width,
+        } = &opening.kind
+        {
+            let label = format!("О{}", oi + 1);
+            let reveal_perim_mm = 2.0 * height + 2.0 * width;
+            let reveal_area_mm2 = reveal_perim_mm * reveal_width;
+
+            write_str(sheet, row, 0, &label, &fmts.text)?;
+            write_num(sheet, row, 1, *height, &fmts.number)?;
+            write_num(sheet, row, 2, *width, &fmts.number)?;
+            write_num(sheet, row, 3, *reveal_width, &fmts.number)?;
+            write_num(sheet, row, 4, *sill_height, &fmts.number)?;
+            write_num(sheet, row, 5, reveal_perim_mm / 1e3, &fmts.number)?;
+            write_num(sheet, row, 6, reveal_area_mm2 / 1e6, &fmts.number)?;
+
+            row += 1;
+        }
+    }
+
+    Ok(row)
+}
+
+// ---------------------------------------------------------------------------
+// Sheet 2: Двери (Doors)
+// ---------------------------------------------------------------------------
 
 pub(super) fn write_doors_sheet(
     sheet: &mut Worksheet,
     project: &Project,
-    fmt_header: &Format,
-    fmt_text: &Format,
-    fmt_number: &Format,
+    fmts: &ExcelFormats,
 ) -> Result<(), String> {
     let door_headers = [
         "Дверь",
@@ -250,11 +240,7 @@ pub(super) fn write_doors_sheet(
         "Из помещения",
         "В помещение",
     ];
-    for (col, header) in door_headers.iter().enumerate() {
-        sheet
-            .write_string_with_format(0, col as u16, *header, fmt_header)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-    }
+    write_header_row(sheet, 0, &door_headers, &fmts.header)?;
 
     sheet.set_column_width(0, 12).ok();
     sheet.set_column_width(1, 14).ok();
@@ -277,10 +263,10 @@ pub(super) fn write_doors_sheet(
         // Depth = wall thickness
         let depth = opening
             .wall_id
-            .and_then(|wid| project.walls.iter().find(|w| w.id == wid))
+            .and_then(|wid| project.wall(wid))
             .map_or(0.0, |w| w.thickness);
 
-        // Door perimeter: 2×height + width (no threshold)
+        // Door perimeter: 2*height + width (no threshold)
         let perim_mm = 2.0 * height + width;
 
         // Find rooms that contain this door's wall
@@ -296,30 +282,16 @@ pub(super) fn write_doors_sheet(
             })
             .unwrap_or_default();
 
-        let from_room = rooms_with_wall.first().copied().unwrap_or("—");
-        let to_room = rooms_with_wall.get(1).copied().unwrap_or("—");
+        let from_room = rooms_with_wall.first().copied().unwrap_or("\u{2014}");
+        let to_room = rooms_with_wall.get(1).copied().unwrap_or("\u{2014}");
 
-        sheet
-            .write_string_with_format(door_row, 0, &label, fmt_text)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        sheet
-            .write_number_with_format(door_row, 1, *height, fmt_number)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        sheet
-            .write_number_with_format(door_row, 2, *width, fmt_number)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        sheet
-            .write_number_with_format(door_row, 3, depth, fmt_number)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        sheet
-            .write_number_with_format(door_row, 4, perim_mm / 1e3, fmt_number)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        sheet
-            .write_string_with_format(door_row, 5, from_room, fmt_text)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-        sheet
-            .write_string_with_format(door_row, 6, to_room, fmt_text)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
+        write_str(sheet, door_row, 0, &label, &fmts.text)?;
+        write_num(sheet, door_row, 1, *height, &fmts.number)?;
+        write_num(sheet, door_row, 2, *width, &fmts.number)?;
+        write_num(sheet, door_row, 3, depth, &fmts.number)?;
+        write_num(sheet, door_row, 4, perim_mm / 1e3, &fmts.number)?;
+        write_str(sheet, door_row, 5, from_room, &fmts.text)?;
+        write_str(sheet, door_row, 6, to_room, &fmts.text)?;
 
         door_row += 1;
     }
@@ -327,14 +299,15 @@ pub(super) fn write_doors_sheet(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Sheet 3: Смета (Estimate)
+// ---------------------------------------------------------------------------
+
 pub(super) fn write_estimate_sheet(
     sheet: &mut Worksheet,
     project: &Project,
     price_list: &PriceList,
-    fmt_header: &Format,
-    fmt_text: &Format,
-    fmt_number: &Format,
-    fmt_currency: &Format,
+    fmts: &ExcelFormats,
 ) -> Result<(), String> {
     let estimate_headers = [
         "Помещение / Объект",
@@ -344,11 +317,7 @@ pub(super) fn write_estimate_sheet(
         "Цена за ед. (₽)",
         "Стоимость (₽)",
     ];
-    for (col, header) in estimate_headers.iter().enumerate() {
-        sheet
-            .write_string_with_format(0, col as u16, *header, fmt_header)
-            .map_err(|e| format!("Ошибка записи: {e}"))?;
-    }
+    write_header_row(sheet, 0, &estimate_headers, &fmts.header)?;
 
     sheet.set_column_width(0, 25).ok();
     sheet.set_column_width(1, 25).ok();
@@ -380,35 +349,23 @@ pub(super) fn write_estimate_sheet(
             let qty = match (wall_side, section_index) {
                 (Some(side), Some(si)) => {
                     // Per-section wall service: use section quantity
-                    if let Some(wall) = project.walls.iter().find(|w| w.id == obj_id) {
+                    if let Some(wall) = project.wall(obj_id) {
                         wall_section_quantity(tmpl.unit_type, wall, side, si, &project.openings)
                     } else {
-                        compute_quantity(project, tmpl.unit_type, obj_id, Some(side))
+                        compute_object_quantity(project, tmpl.unit_type, obj_id, Some(side))
                     }
                 }
-                _ => compute_quantity(project, tmpl.unit_type, obj_id, wall_side),
+                _ => compute_object_quantity(project, tmpl.unit_type, obj_id, wall_side),
             };
             let cost = qty * price;
             *total += cost;
 
-            sheet
-                .write_string_with_format(*row, 0, label, fmt_text)
-                .map_err(|e| format!("Ошибка записи: {e}"))?;
-            sheet
-                .write_string_with_format(*row, 1, &tmpl.name, fmt_text)
-                .map_err(|e| format!("Ошибка записи: {e}"))?;
-            sheet
-                .write_string_with_format(*row, 2, tmpl.unit_type.label(), fmt_text)
-                .map_err(|e| format!("Ошибка записи: {e}"))?;
-            sheet
-                .write_number_with_format(*row, 3, qty, fmt_number)
-                .map_err(|e| format!("Ошибка записи: {e}"))?;
-            sheet
-                .write_number_with_format(*row, 4, price, fmt_currency)
-                .map_err(|e| format!("Ошибка записи: {e}"))?;
-            sheet
-                .write_number_with_format(*row, 5, cost, fmt_currency)
-                .map_err(|e| format!("Ошибка записи: {e}"))?;
+            write_str(sheet, *row, 0, label, &fmts.text)?;
+            write_str(sheet, *row, 1, &tmpl.name, &fmts.text)?;
+            write_str(sheet, *row, 2, tmpl.unit_type.label(), &fmts.text)?;
+            write_num(sheet, *row, 3, qty, &fmts.number)?;
+            write_num(sheet, *row, 4, price, &fmts.currency)?;
+            write_num(sheet, *row, 5, cost, &fmts.currency)?;
 
             *row += 1;
         }
@@ -470,7 +427,7 @@ pub(super) fn write_estimate_sheet(
             }
 
             // Opening services for openings on this wall (windows only in room context)
-            if let Some(wall) = project.walls.iter().find(|w| w.id == *wall_id) {
+            if let Some(wall) = project.wall(*wall_id) {
                 for opening in project
                     .openings
                     .iter()
@@ -523,35 +480,8 @@ pub(super) fn write_estimate_sheet(
 
     // TOTAL row
     est_row += 1;
-    let fmt_total = Format::new()
-        .set_bold()
-        .set_border(rust_xlsxwriter::FormatBorder::Thin);
-    let fmt_total_currency = Format::new()
-        .set_bold()
-        .set_num_format("#,##0.00 ₽")
-        .set_border(rust_xlsxwriter::FormatBorder::Thin);
-    sheet
-        .write_string_with_format(est_row, 4, "ИТОГО:", &fmt_total)
-        .map_err(|e| format!("Ошибка записи: {e}"))?;
-    sheet
-        .write_number_with_format(est_row, 5, grand_total, &fmt_total_currency)
-        .map_err(|e| format!("Ошибка записи: {e}"))?;
+    write_str(sheet, est_row, 4, "ИТОГО:", &fmts.total)?;
+    write_num(sheet, est_row, 5, grand_total, &fmts.total_currency)?;
 
     Ok(())
-}
-
-/// Compute quantity for a service assigned to an object.
-/// For wall services, `wall_side` specifies which side's dimensions to use.
-fn compute_quantity(project: &Project, unit_type: UnitType, obj_id: Uuid, wall_side: Option<WallSide>) -> f64 {
-    if let Some(wall) = project.walls.iter().find(|w| w.id == obj_id) {
-        let side = wall_side.unwrap_or(WallSide::Left);
-        return wall_side_quantity(unit_type, wall, side, &project.openings);
-    }
-    if let Some(opening) = project.openings.iter().find(|o| o.id == obj_id) {
-        return opening_quantity(unit_type, opening);
-    }
-    if let Some(room) = project.rooms.iter().find(|r| r.id == obj_id) {
-        return room_quantity(unit_type, room, &project.walls);
-    }
-    if unit_type == UnitType::Piece { 1.0 } else { 0.0 }
 }

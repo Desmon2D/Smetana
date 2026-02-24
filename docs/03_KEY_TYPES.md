@@ -196,7 +196,9 @@ pub struct Project {
 }
 ```
 
-Mutation methods on `Project`: `add_wall()`, `remove_wall()`, `add_opening()`, `remove_opening()`, `remove_label()`.
+Mutation methods on `Project`: `add_wall()`, `remove_wall()`, `add_opening()`, `remove_opening()`, `remove_label()`, `move_opening()`.
+
+Lookup methods: `wall(&self, id)`, `wall_mut(&mut self, id)`, `opening(&self, id)`, `opening_mut(&mut self, id)`, `room(&self, id)`.
 
 ### `UnitType` — `src/model/price.rs`
 
@@ -324,7 +326,7 @@ pub struct WallTool {
 }
 ```
 
-### `OpeningTool` — `src/editor/opening_tool.rs`
+### `OpeningTool` — `src/editor/mod.rs`
 
 ```rust
 pub struct OpeningTool {
@@ -359,7 +361,7 @@ pub struct SnapResult {
 }
 ```
 
-### `RoomMetrics` — `src/editor/room_metrics.rs`
+### `RoomMetrics` — `src/model/room_metrics.rs`
 
 ```rust
 pub struct RoomMetrics {
@@ -409,8 +411,8 @@ pub struct DirectedEdge {
 
 ```rust
 pub struct JointVertices {
-    pub left: egui::Pos2,
-    pub right: egui::Pos2,
+    pub left: DVec2,   // World-space (mm)
+    pub right: DVec2,  // World-space (mm)
 }
 ```
 
@@ -418,22 +420,22 @@ pub struct JointVertices {
 
 ```rust
 pub struct HubPolygon {
-    pub vertices: Vec<egui::Pos2>,
+    pub vertices: Vec<DVec2>,  // World-space (mm)
     pub fill: egui::Color32,
 }
 ```
 
-### `WallAtJunction` — `src/editor/wall_joints.rs` (pub(super))
+### `WallAtJunction` — `src/editor/wall_joints.rs` (private)
 
 ```rust
-pub(super) struct WallAtJunction {
-    pub(super) wall_id: Uuid,
-    pub(super) is_end: bool,
-    pub(super) angle: f32,
-    pub(super) half_thick: f32,
-    pub(super) left: egui::Pos2,
-    pub(super) right: egui::Pos2,
-    pub(super) dir: egui::Vec2,
+struct WallAtJunction {
+    wall_id: Uuid,
+    is_end: bool,
+    angle: f64,
+    half_thick: f64,
+    left: DVec2,   // World-space (mm)
+    right: DVec2,  // World-space (mm)
+    dir: DVec2,
 }
 ```
 
@@ -441,7 +443,7 @@ pub(super) struct WallAtJunction {
 
 ## History Type
 
-### `History` — `src/history.rs`
+### `History` — `src/app/history.rs`
 
 ```rust
 pub struct History {
@@ -485,7 +487,7 @@ See [06_STATE_MANAGEMENT.md](06_STATE_MANAGEMENT.md) for field breakdown.
 
 ## Persistence Types
 
-### `ProjectEntry` — `src/persistence/project_io.rs`
+### `ProjectEntry` — `src/persistence.rs`
 
 ```rust
 pub struct ProjectEntry {

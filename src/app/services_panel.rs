@@ -1,8 +1,34 @@
 use std::collections::HashMap;
 use eframe::egui;
 
-use crate::model::{AssignedService, Project, TargetObjectType, UnitType, Wall, WallSide};
+use crate::model::{AssignedService, Project, TargetObjectType, UnitType, WallSide};
 use super::{App, SECTION_COLORS, ServiceTarget};
+
+/// Synchronise `custom_price` on each `AssignedService` with the price the
+/// user edited in the UI row. Returns `true` if any service was modified.
+fn sync_custom_prices(
+    svcs: &mut [AssignedService],
+    rows: &[AssignedServiceRow],
+    prices: &[f64],
+) -> bool {
+    let mut changed = false;
+    for (i, row) in rows.iter().enumerate() {
+        if !row.valid || i >= svcs.len() {
+            continue;
+        }
+        let new_price = prices[i];
+        if (new_price - row.template_price).abs() < 0.01 {
+            if svcs[i].custom_price.is_some() {
+                svcs[i].custom_price = None;
+                changed = true;
+            }
+        } else if (new_price - row.effective_price).abs() > 0.001 {
+            svcs[i].custom_price = Some(new_price);
+            changed = true;
+        }
+    }
+    changed
+}
 
 pub(super) struct AssignedServiceRow {
     pub name: String,
@@ -15,22 +41,6 @@ pub(super) struct AssignedServiceRow {
 }
 
 impl App {
-    pub(super) fn compute_wall_side_quantity(&self, unit_type: UnitType, wall: &Wall, side: WallSide) -> f64 {
-        crate::model::wall_side_quantity(unit_type, wall, side, &self.project.openings)
-    }
-
-    pub(super) fn compute_wall_section_quantity(&self, unit_type: UnitType, wall: &Wall, side: WallSide, section_index: usize) -> f64 {
-        crate::model::wall_section_quantity(unit_type, wall, side, section_index, &self.project.openings)
-    }
-
-    pub(super) fn compute_opening_quantity(&self, unit_type: UnitType, opening: &crate::model::Opening) -> f64 {
-        crate::model::opening_quantity(unit_type, opening)
-    }
-
-    pub(super) fn compute_room_quantity(&self, unit_type: UnitType, room: &crate::model::Room) -> f64 {
-        crate::model::room_quantity(unit_type, room, &self.project.walls)
-    }
-
     pub(super) fn build_assigned_rows_for(
         &self,
         assigned: &[AssignedService],
@@ -74,12 +84,10 @@ impl App {
 
     pub(super) fn show_services_list(
         ui: &mut egui::Ui,
-        grid_id: &str,
         rows: &[AssignedServiceRow],
-        prices: &mut Vec<f64>,
-    ) -> (Option<usize>, Option<usize>) {
+        prices: &[f64],
+    ) -> Option<usize> {
         let mut remove_idx: Option<usize> = None;
-        let reset_idx: Option<usize> = None;
 
         for (i, row) in rows.iter().enumerate() {
             ui.horizontal(|ui| {
@@ -96,8 +104,7 @@ impl App {
             });
         }
 
-        let _ = (grid_id, &reset_idx);
-        (reset_idx, remove_idx)
+        remove_idx
     }
 
     pub(super) fn show_wall_side_services(
@@ -110,8 +117,7 @@ impl App {
     ) {
         ui.label(side_label);
 
-        let section_count = self.project.walls.iter()
-            .find(|w| w.id == wall_id)
+        let section_count = self.project.wall(wall_id)
             .map(|w| {
                 let sd = match side {
                     WallSide::Left => &w.left_side,
@@ -147,20 +153,20 @@ impl App {
                 .cloned()
                 .unwrap_or_default();
 
-            let wall = self.project.walls.iter().find(|w| w.id == wall_id);
+            let wall = self.project.wall(wall_id);
             let rows = if let Some(wall) = wall {
                 let s = side;
+                let openings = &self.project.openings;
                 self.build_assigned_rows_for(&section_snapshot, |ut| {
-                    self.compute_wall_section_quantity(ut, wall, s, sec_idx)
+                    crate::model::wall_section_quantity(ut, wall, s, sec_idx, openings)
                 })
             } else {
                 Vec::new()
             };
-            let mut prices: Vec<f64> = rows.iter().map(|r| r.effective_price).collect();
+            let prices: Vec<f64> = rows.iter().map(|r| r.effective_price).collect();
 
-            let grid_id = format!("wall_{wall_id}_{side:?}_s{sec_idx}_services");
-            let (_reset_idx, remove_idx) =
-                Self::show_services_list(ui, &grid_id, &rows, &mut prices);
+            let remove_idx =
+                Self::show_services_list(ui, &rows, &prices);
 
             if ui.small_button("+ Добавить услугу").clicked() {
                 self.service_picker_target = Some(ServiceTarget::WallSide {
@@ -185,29 +191,14 @@ impl App {
                 }
             }
 
-            {
-                let wall_svcs = self.project.wall_services.get_mut(&wall_id);
-                if let Some(wall_svcs) = wall_svcs {
-                    let side_svcs = match side {
-                        WallSide::Left => &mut wall_svcs.left,
-                        WallSide::Right => &mut wall_svcs.right,
-                    };
-                    if let Some(section) = side_svcs.sections.get_mut(sec_idx) {
-                        for (i, row) in rows.iter().enumerate() {
-                            if !row.valid || i >= section.len() {
-                                continue;
-                            }
-                            let new_price = prices[i];
-                            if (new_price - row.template_price).abs() < 0.01 {
-                                if section[i].custom_price.is_some() {
-                                    section[i].custom_price = None;
-                                    self.history.mark_dirty();
-                                }
-                            } else if (new_price - row.effective_price).abs() > 0.001 {
-                                section[i].custom_price = Some(new_price);
-                                self.history.mark_dirty();
-                            }
-                        }
+            if let Some(wall_svcs) = self.project.wall_services.get_mut(&wall_id) {
+                let side_svcs = match side {
+                    WallSide::Left => &mut wall_svcs.left,
+                    WallSide::Right => &mut wall_svcs.right,
+                };
+                if let Some(section) = side_svcs.sections.get_mut(sec_idx) {
+                    if sync_custom_prices(section, &rows, &prices) {
+                        self.history.mark_dirty();
                     }
                 }
             }
@@ -223,10 +214,9 @@ impl App {
         rows: Vec<AssignedServiceRow>,
         services_map: fn(&mut Project) -> &mut HashMap<uuid::Uuid, Vec<AssignedService>>,
     ) {
-        let mut prices: Vec<f64> = rows.iter().map(|r| r.effective_price).collect();
-        let grid_id = format!("svc_{obj_id}");
-        let (_reset_idx, remove_idx) =
-            Self::show_services_list(ui, &grid_id, &rows, &mut prices);
+        let prices: Vec<f64> = rows.iter().map(|r| r.effective_price).collect();
+        let remove_idx =
+            Self::show_services_list(ui, &rows, &prices);
 
         if ui.small_button("+ Добавить услугу").clicked() {
             self.service_picker_target = Some(target);
@@ -242,24 +232,9 @@ impl App {
             }
         }
 
-        {
-            let svcs = services_map(&mut self.project).get_mut(&obj_id);
-            if let Some(svcs) = svcs {
-                for (i, row) in rows.iter().enumerate() {
-                    if !row.valid || i >= svcs.len() {
-                        continue;
-                    }
-                    let new_price = prices[i];
-                    if (new_price - row.template_price).abs() < 0.01 {
-                        if svcs[i].custom_price.is_some() {
-                            svcs[i].custom_price = None;
-                            self.history.mark_dirty();
-                        }
-                    } else if (new_price - row.effective_price).abs() > 0.001 {
-                        svcs[i].custom_price = Some(new_price);
-                        self.history.mark_dirty();
-                    }
-                }
+        if let Some(svcs) = services_map(&mut self.project).get_mut(&obj_id) {
+            if sync_custom_prices(svcs, &rows, &prices) {
+                self.history.mark_dirty();
             }
         }
 

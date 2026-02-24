@@ -29,6 +29,7 @@
 | `OpeningKind::default_window() -> Self` | Window 1400x1200mm, sill 900, reveal 250 |
 | `OpeningKind::width(&self) -> f64` | Opening width mm |
 | `OpeningKind::height(&self) -> f64` | Opening height mm |
+| `OpeningKind::target_type(&self) -> TargetObjectType` | Map Door→Door, Window→Window |
 | `Opening::new(kind: OpeningKind, wall_id: Option<Uuid>, offset_along_wall: f64) -> Self` | Create opening |
 | `Opening::new_door(wall_id: Uuid, offset_along_wall: f64) -> Self` | Create default door |
 | `Opening::new_window(wall_id: Uuid, offset_along_wall: f64) -> Self` | Create default window |
@@ -56,6 +57,12 @@
 | `Project::add_opening(&mut self, opening: Opening)` | Link opening to wall's openings list, push opening |
 | `Project::remove_opening(&mut self, id: Uuid)` | Unlink from wall, remove opening |
 | `Project::remove_label(&mut self, id: Uuid)` | Remove label by ID |
+| `Project::move_opening(&mut self, opening_id, new_wall, new_offset) -> Option<Uuid>` | Detach from old wall, update, attach to new wall. Returns previous wall_id |
+| `Project::wall(&self, id: Uuid) -> Option<&Wall>` | Lookup wall by ID |
+| `Project::wall_mut(&mut self, id: Uuid) -> Option<&mut Wall>` | Lookup wall by ID (mutable) |
+| `Project::opening(&self, id: Uuid) -> Option<&Opening>` | Lookup opening by ID |
+| `Project::opening_mut(&mut self, id: Uuid) -> Option<&mut Opening>` | Lookup opening by ID (mutable) |
+| `Project::room(&self, id: Uuid) -> Option<&Room>` | Lookup room by ID |
 | `SideServices::ensure_section(&mut self, section_index: usize) -> &mut Vec<AssignedService>` | Ensure section exists, return mutable ref |
 | `SideServices::all_services(&self) -> impl Iterator<Item = &AssignedService>` | Flat iterator over all sections |
 | `SideServices::is_empty(&self) -> bool` | True if no sections have services |
@@ -81,6 +88,7 @@
 | `wall_section_quantity(unit, wall, side, section_index, openings) -> f64` | Quantity for one section of a wall side |
 | `opening_quantity(unit: UnitType, opening: &Opening) -> f64` | Quantity for an opening |
 | `room_quantity(unit: UnitType, room: &Room, walls: &[Wall]) -> f64` | Quantity for a room |
+| `compute_object_quantity(project: &Project, unit_type: UnitType, obj_id: Uuid, wall_side: Option<(WallSide, usize)>) -> f64` | Generic quantity for any object (wall section, opening, or room) |
 
 ## `src/editor/canvas.rs` — Canvas
 
@@ -88,6 +96,7 @@
 |-----------|---------|
 | `Canvas::world_to_screen(&self, world: Pos2, rect_center: Pos2) -> Pos2` | World mm → screen px |
 | `Canvas::screen_to_world(&self, screen: Pos2, rect_center: Pos2) -> Pos2` | Screen px → world mm |
+| `Canvas::screen_to_world_dvec2(&self, screen: Pos2, rect_center: Pos2) -> DVec2` | Screen px → world mm as DVec2 |
 | `Canvas::pan(&mut self, screen_delta: Vec2)` | Pan by screen-space delta |
 | `Canvas::zoom_toward(&mut self, screen_pos: Pos2, rect_center: Pos2, factor: f32)` | Zoom keeping cursor point stable |
 | `Canvas::draw_grid(&self, painter: &Painter, rect: Rect)` | Render 3-level grid + origin axes |
@@ -97,6 +106,7 @@
 | Signature | Purpose |
 |-----------|---------|
 | `snap(world_pos: DVec2, grid_step: f64, zoom: f32, walls: &[Wall], shift_held: bool) -> SnapResult` | Compute snapped position. Priority: vertex > wall edge > grid > free |
+| `SnapResult::wall_edge_junction(&self) -> Option<(Uuid, WallSide, f64)>` | Extract wall edge junction data if snap type is WallEdge |
 
 **Constants:** `VERTEX_SNAP_SCREEN_PX: f64 = 15.0`
 
@@ -119,27 +129,27 @@
 
 **Constants:** `MERGE_EPSILON: f64 = 5.0`
 
-## `src/editor/room_metrics.rs` — Room Metrics
+## `src/model/room_metrics.rs` — Room Metrics
 
 | Signature | Purpose |
 |-----------|---------|
 | `compute_room_metrics(room: &Room, walls: &[Wall]) -> Option<RoomMetrics>` | Compute inner polygon, net/gross area, perimeter |
 
-## `src/editor/triangulation.rs` — Triangulation
+## `src/editor/endpoint_merge.rs` — Endpoint Merging
 
 | Signature | Purpose |
 |-----------|---------|
-| `triangulate(vertices: &[egui::Pos2]) -> Vec<[usize; 3]>` | earcutr-based triangulation for rendering |
+| `merge_endpoints(walls: &[Wall], epsilon: f64) -> Vec<(DVec2, Vec<(Uuid, bool)>)>` | Merge wall endpoints within epsilon distance |
 
 ## `src/editor/wall_joints.rs` — Wall Joint Rendering
 
 | Signature | Purpose |
 |-----------|---------|
-| `compute_joints(walls: &[Wall], canvas: &Canvas, center: Pos2) -> (HashMap<(Uuid, bool), JointVertices>, Vec<HubPolygon>)` | Compute miter joints and hub polygons for all wall junctions |
+| `compute_joints(walls: &[Wall]) -> (HashMap<(Uuid, bool), JointVertices>, Vec<HubPolygon>)` | Compute world-space miter joints and hub polygons for all wall junctions |
 
-**Constants:** `MERGE_EPS: f64 = 5.0`, `MAX_MITER_RATIO: f32 = 3.0`
+**Constants:** `MERGE_EPS: f64 = 5.0`, `MAX_MITER_RATIO: f64 = 3.0`
 
-## `src/history.rs` — Snapshot Undo/Redo
+## `src/app/history.rs` — Snapshot Undo/Redo
 
 | Signature | Purpose |
 |-----------|---------|
@@ -151,7 +161,7 @@
 | `History::can_redo(&self) -> bool` | Check if redo stack is non-empty |
 | `History::mark_dirty(&mut self)` | Bump version without storing snapshot (for non-undoable changes) |
 
-## `src/persistence/project_io.rs` — Project I/O
+## `src/persistence.rs` — Project & Price List I/O
 
 | Signature | Purpose |
 |-----------|---------|
@@ -162,11 +172,6 @@
 | `list_projects() -> Result<Vec<PathBuf>, String>` | List all `.json` files in saves directory |
 | `list_project_entries() -> Result<Vec<ProjectEntry>, String>` | List projects with name, path, last-modified (sorted newest first) |
 | `delete_project(path: &Path) -> Result<(), String>` | Delete project file |
-
-## `src/persistence/price_io.rs` — Price List I/O
-
-| Signature | Purpose |
-|-----------|---------|
 | `price_path(name: &str) -> PathBuf` | `saves/prices/{name}.json` |
 | `save_price_list(price_list: &PriceList) -> Result<PathBuf, String>` | Save to default path |
 | `save_price_list_to(price_list: &PriceList, path: &Path) -> Result<(), String>` | Save to arbitrary path (export) |
@@ -189,9 +194,9 @@
 | File | Method | Purpose |
 |------|--------|---------|
 | `mod.rs` | `delete_selected(&mut self)` | Snapshot + remove selected wall/opening/label |
-| `canvas.rs` | `show_canvas(&mut self, ctx)` | Central panel: input handling, tool dispatch, room detection, rendering |
-| `canvas_draw.rs` | `draw_walls(&self, painter, rect)` | Render all walls with joints, sections, labels |
-| `canvas_draw.rs` | `draw_openings(&self, painter, rect)` | Render doors (arc) and windows (parallel lines) |
+| `canvas.rs` | `show_canvas(&mut self, ctx)` | Central panel orchestrator: pan/zoom, tool dispatch, room detection, rendering |
+| `canvas_draw.rs` | `draw_walls(&self, painter, rect)` | Render all walls: `draw_wall_geometry()` + hub polygons + `draw_wall_overlays()` |
+| `canvas_draw.rs` | `draw_openings(&self, painter, rect)` | Dispatch to `draw_attached_opening()` / `draw_orphaned_opening()` |
 | `canvas_draw.rs` | `draw_rooms(&self, painter, rect)` | Render room fills (triangulated) with name/area labels |
 | `canvas_draw.rs` | `draw_wall_preview(&self, painter, rect)` | Preview line for wall being drawn |
 | `canvas_draw.rs` | `draw_opening_preview(&self, painter, rect)` | Preview rectangle for opening placement |
@@ -205,13 +210,11 @@
 | `property_edits.rs` | `opening_errors(&self, opening) -> Vec<&str>` | List validation errors for an opening |
 | `property_edits.rs` | `selection_target_type(&self) -> Option<TargetObjectType>` | Map current selection to target type |
 | `property_edits.rs` | `show_side_sections(ui, side_data, side_id, section_net_areas, color_offset)` | Show per-section property editors (static method) |
+| `property_edits.rs` | `labeled_drag(ui, label, val, range, speed) -> bool` | DragValue with label in horizontal layout |
+| `property_edits.rs` | `labeled_value(ui, label, value)` | Read-only label pair in horizontal layout |
 | `price_list.rs` | `show_price_list_window_ui(&mut self, ctx)` | Floating window: add/edit/delete services, import/export |
 | `service_picker.rs` | `show_service_picker_window(&mut self, ctx)` | Dialog for picking service to assign |
-| `services_panel.rs` | `compute_wall_side_quantity(&self, unit, wall, side) -> f64` | Delegate to `model::wall_side_quantity` |
-| `services_panel.rs` | `compute_wall_section_quantity(&self, unit, wall, side, idx) -> f64` | Delegate to `model::wall_section_quantity` |
-| `services_panel.rs` | `compute_opening_quantity(&self, unit, opening) -> f64` | Delegate to `model::opening_quantity` |
-| `services_panel.rs` | `compute_room_quantity(&self, unit, room) -> f64` | Delegate to `model::room_quantity` |
 | `services_panel.rs` | `build_assigned_rows_for(&self, assigned, qty_fn) -> Vec<AssignedServiceRow>` | Build display rows for assigned services |
-| `services_panel.rs` | `show_services_list(ui, grid_id, rows, prices) -> (Option<usize>, Option<usize>)` | Render service list, return (reset_idx, remove_idx) |
+| `services_panel.rs` | `show_services_list(ui, rows, prices) -> Option<usize>` | Render service list, return remove index |
 | `services_panel.rs` | `show_wall_side_services(&mut self, ui, wall_id, side, label, color_offset)` | Show services for wall side with per-section breakdown |
 | `services_panel.rs` | `show_flat_services(&mut self, ui, obj_id, target, target_type, rows, services_map)` | Show services for opening/room |

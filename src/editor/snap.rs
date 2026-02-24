@@ -29,6 +29,15 @@ pub struct SnapResult {
     pub snap_type: SnapType,
 }
 
+impl SnapResult {
+    pub fn wall_edge_junction(&self) -> Option<(Uuid, WallSide, f64)> {
+        match &self.snap_type {
+            SnapType::WallEdge { wall_id, side, t } => Some((*wall_id, *side, *t)),
+            _ => None,
+        }
+    }
+}
+
 /// Compute the snapped position for a world-space cursor coordinate.
 ///
 /// Priority: vertex snap > grid snap. Shift disables all snapping.

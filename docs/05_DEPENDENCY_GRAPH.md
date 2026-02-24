@@ -15,7 +15,7 @@
 |------------|-------|
 | `eframe::egui` | UI framework |
 | `crate::editor` | `EditorState`, `EditorTool` |
-| `crate::history` | `History` |
+| `self::history` | `History` |
 | `crate::model` | `PriceList`, `Project`, `ProjectDefaults`, `Room`, `WallSide` |
 | `crate::persistence` | `list_project_entries`, `load_project`, `save_project`, `ProjectEntry` |
 
@@ -65,7 +65,7 @@
 |------------|-------|
 | `eframe::egui` | UI framework |
 | `crate::editor` | `Selection` |
-| `crate::editor::room_metrics` | `compute_room_metrics` |
+| `crate::model::room_metrics` | `compute_room_metrics` |
 | `crate::model` | `OpeningKind`, `TargetObjectType`, `WallSide`, `section_net_area` |
 | `super` | `App`, `ServiceTarget` |
 
@@ -104,7 +104,7 @@
 | `crate::model` | `AssignedService`, `Project`, `TargetObjectType`, `UnitType`, `Wall`, `WallSide` |
 | `super` | `App`, `SECTION_COLORS`, `ServiceTarget` |
 
-### `src/history.rs`
+### `src/app/history.rs`
 
 | Depends On | Items |
 |------------|-------|
@@ -133,12 +133,6 @@
 | `glam` | `DVec2` |
 | `crate::editor::snap` | `SnapResult` |
 
-### `src/editor/opening_tool.rs`
-
-| Depends On | Items |
-|------------|-------|
-| `uuid` | `Uuid` |
-
 ### `src/editor/snap.rs`
 
 | Depends On | Items |
@@ -156,61 +150,46 @@
 | `std::collections` | `HashSet` |
 | `crate::model` | `Room`, `Wall`, `WallSide` |
 
-### `src/editor/room_metrics.rs`
+### `src/editor/wall_joints.rs`
+
+| Depends On | Items |
+|------------|-------|
+| `eframe::egui` | `Color32` |
+| `glam` | `DVec2` |
+| `uuid` | `Uuid` |
+| `std::collections` | `HashMap` |
+| `crate::model` | `Wall` |
+| `crate::editor::endpoint_merge` | `merge_endpoints` |
+
+### `src/editor/endpoint_merge.rs`
+
+| Depends On | Items |
+|------------|-------|
+| `glam` | `DVec2` |
+| `uuid` | `Uuid` |
+| `crate::model` | `Wall` |
+
+### `src/model/room_metrics.rs`
 
 | Depends On | Items |
 |------------|-------|
 | `glam` | `DVec2` |
 | `crate::model` | `Room`, `Wall`, `WallSide`, `project_onto_segment` |
 
-### `src/editor/triangulation.rs`
-
-| Depends On | Items |
-|------------|-------|
-| `egui` | `Pos2` (implicit via crate) |
-| `earcutr` | `earcut` |
-
-### `src/editor/wall_joints.rs`
-
-| Depends On | Items |
-|------------|-------|
-| `eframe::egui` | UI framework |
-| `uuid` | `Uuid` |
-| `std::collections` | `HashMap` |
-| `crate::editor::canvas` | `Canvas` |
-| `crate::model` | `Wall` |
-| `super::wall_joints_miter` | `compute_two_wall_miter`, `compute_hub_polygon`, `line_line_intersection` |
-
-### `src/editor/wall_joints_miter.rs`
-
-| Depends On | Items |
-|------------|-------|
-| `eframe::egui` | UI framework |
-| `uuid` | `Uuid` |
-| `std::collections` | `HashMap` |
-| `super::wall_joints` | `HubPolygon`, `JointVertices`, `WallAtJunction`, `MAX_MITER_RATIO` |
-
 ### `src/model/quantity.rs`
 
 | Depends On | Items |
 |------------|-------|
-| `crate::editor::room_metrics` | `compute_room_metrics` |
-| `crate::model` | `Opening`, `OpeningKind`, `Room`, `UnitType`, `Wall`, `WallSide` |
+| `crate::model::room_metrics` | `compute_room_metrics` |
+| `crate::model` | `Opening`, `OpeningKind`, `Project`, `Room`, `UnitType`, `Wall`, `WallSide` |
+| `uuid` | `Uuid` |
 
-### `src/persistence/project_io.rs`
+### `src/persistence.rs`
 
 | Depends On | Items |
 |------------|-------|
 | `std::fs`, `std::path`, `std::time` | File I/O |
-| `crate::model` | `Project` |
-
-### `src/persistence/price_io.rs`
-
-| Depends On | Items |
-|------------|-------|
-| `std::fs`, `std::path` | File I/O |
-| `crate::model` | `PriceList` |
-| `super::project_io` | `ensure_saves_dirs` |
+| `crate::model` | `Project`, `PriceList` |
 
 ### `src/export/excel.rs`
 
@@ -225,28 +204,27 @@
 
 | Depends On | Items |
 |------------|-------|
-| `rust_xlsxwriter` | `Format`, `Worksheet` |
-| `uuid` | `Uuid` |
+| `rust_xlsxwriter` | `Worksheet` |
 | `chrono` | `Local` |
-| `crate::editor::room_metrics` | `compute_room_metrics` |
-| `crate::model` | `AssignedService`, `OpeningKind`, `PriceList`, `Project`, `UnitType`, `WallSide`, `opening_area_mm2`, `wall_side_quantity`, `opening_quantity`, `room_quantity` |
+| `crate::model::room_metrics` | `compute_room_metrics` |
+| `crate::model` | `AssignedService`, `OpeningKind`, `PriceList`, `Project`, `WallSide`, `opening_area_mm2`, `wall_side_quantity`, `opening_quantity`, `room_quantity`, `compute_object_quantity` |
+| `super::excel` | `ExcelFormats`, `write_str`, `write_num`, `write_header_row` |
 
 ## Cross-Layer Summary
 
 ```
-model/ ←── editor/ (snap, room_detection, room_metrics use model types + DVec2)
+model/ ←── editor/ (snap, room_detection use model types + DVec2)
   ↑            ↑
   │            │
-model/ ←── history.rs (snapshot clones entire Project)
+model/ ←── app/history.rs (snapshot clones entire Project)
   ↑            ↑
   │            │
 model/ ←── app/ (all UI files read/write model through Project)
-editor/ ←── app/ (canvas uses snap, room detection; drawing uses joints, metrics)
-history ←── app/ (canvas + toolbar call snapshot/undo/redo)
+editor/ ←── app/ (canvas uses snap, room detection; drawing uses joints)
   ↑
 persistence ←── app/ (project_list, toolbar, price_list use save/load)
 export ←── app/ (toolbar triggers xlsx export)
 
-NOTE: model/quantity.rs depends on editor/room_metrics (cross-layer)
-NOTE: export/excel_sheets.rs depends on editor/room_metrics (cross-layer)
+NOTE: model/quantity.rs depends on model/room_metrics (same layer)
+NOTE: export/excel_sheets.rs depends on model/room_metrics (cross-layer)
 ```
