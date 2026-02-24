@@ -118,27 +118,27 @@ impl App {
     fn delete_selected(&mut self) {
         match self.editor.selection {
             Selection::Point(id) => {
-                self.history.snapshot(&self.project, "delete point");
+                self.history.snapshot(&self.project);
                 self.project.remove_point(id);
             }
             Selection::Edge(id) => {
-                self.history.snapshot(&self.project, "delete edge");
+                self.history.snapshot(&self.project);
                 self.project.edges.retain(|e| e.id != id);
             }
             Selection::Room(id) => {
-                self.history.snapshot(&self.project, "delete room");
+                self.history.snapshot(&self.project);
                 self.project.remove_room(id);
             }
             Selection::Wall(id) => {
-                self.history.snapshot(&self.project, "delete wall");
+                self.history.snapshot(&self.project);
                 self.project.remove_wall(id);
             }
             Selection::Opening(id) => {
-                self.history.snapshot(&self.project, "delete opening");
+                self.history.snapshot(&self.project);
                 self.project.remove_opening(id);
             }
             Selection::Label(id) => {
-                self.history.snapshot(&self.project, "delete label");
+                self.history.snapshot(&self.project);
                 self.project.remove_label(id);
             }
             Selection::None => return,
@@ -148,10 +148,8 @@ impl App {
 
     fn set_tool(&mut self, tool: Tool) {
         if self.editor.active_tool != tool {
-            // Clear tool states when switching
-            self.editor.room_tool.points.clear();
-            self.editor.room_tool.building_cutout = false;
-            self.editor.polygon_tool.points.clear();
+            self.editor.tool_state.points.clear();
+            self.editor.tool_state.building_cutout = false;
             self.editor.active_tool = tool;
         }
     }

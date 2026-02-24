@@ -38,7 +38,7 @@ impl App {
 
         // Take snapshot on first edit
         if self.edit_snapshot_version != Some(self.history.version) {
-            self.history.snapshot(&self.project, "edit point");
+            self.history.snapshot(&self.project);
             self.edit_snapshot_version = Some(self.history.version);
         }
 
@@ -142,7 +142,7 @@ impl App {
 
         // Take snapshot on first edit
         if self.edit_snapshot_version != Some(self.history.version) {
-            self.history.snapshot(&self.project, "edit edge");
+            self.history.snapshot(&self.project);
             self.edit_snapshot_version = Some(self.history.version);
         }
 
@@ -227,13 +227,13 @@ impl App {
 
             // Add Cutout button
             if ui.button("Добавить вырез").clicked() {
-                self.editor.room_tool.building_cutout = true;
-                self.editor.room_tool.points.clear();
+                self.editor.tool_state.building_cutout = true;
+                self.editor.tool_state.points.clear();
                 self.editor.active_tool = crate::editor::Tool::Room;
             }
 
             if ui.button("Удалить комнату").clicked() {
-                self.history.snapshot(&self.project, "delete room");
+                self.history.snapshot(&self.project);
                 self.project.remove_room(id);
                 self.editor.selection = Selection::None;
             }
@@ -258,7 +258,7 @@ impl App {
 
         // Take snapshot on first edit
         if self.edit_snapshot_version != Some(self.history.version) {
-            self.history.snapshot(&self.project, "edit wall");
+            self.history.snapshot(&self.project);
             self.edit_snapshot_version = Some(self.history.version);
         }
 
@@ -304,7 +304,7 @@ impl App {
 
         // Take snapshot on first edit
         if self.edit_snapshot_version != Some(self.history.version) {
-            self.history.snapshot(&self.project, "edit opening");
+            self.history.snapshot(&self.project);
             self.edit_snapshot_version = Some(self.history.version);
         }
 

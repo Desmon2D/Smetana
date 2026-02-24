@@ -30,20 +30,52 @@ pub enum Selection {
     Label(Uuid),
 }
 
-/// State for the Room tool: collecting points for a contour.
-#[derive(Default)]
-pub struct RoomToolState {
-    /// Points collected so far for the room contour.
-    pub points: Vec<Uuid>,
-    /// Whether we are building a cutout (after room is created).
-    pub building_cutout: bool,
+impl Selection {
+    pub fn point(&self) -> Option<Uuid> {
+        match self {
+            Self::Point(id) => Some(*id),
+            _ => None,
+        }
+    }
+    pub fn edge(&self) -> Option<Uuid> {
+        match self {
+            Self::Edge(id) => Some(*id),
+            _ => None,
+        }
+    }
+    pub fn room(&self) -> Option<Uuid> {
+        match self {
+            Self::Room(id) => Some(*id),
+            _ => None,
+        }
+    }
+    pub fn wall(&self) -> Option<Uuid> {
+        match self {
+            Self::Wall(id) => Some(*id),
+            _ => None,
+        }
+    }
+    pub fn opening(&self) -> Option<Uuid> {
+        match self {
+            Self::Opening(id) => Some(*id),
+            _ => None,
+        }
+    }
+    pub fn label(&self) -> Option<Uuid> {
+        match self {
+            Self::Label(id) => Some(*id),
+            _ => None,
+        }
+    }
 }
 
-/// State for polygon-based tools (Wall, Door, Window): collecting points.
+/// Shared tool state for contour/polygon-based tools (Room, Wall, Door, Window).
 #[derive(Default)]
-pub struct PolygonToolState {
-    /// Points collected so far for the polygon.
+pub struct ToolState {
+    /// Points collected so far for the contour/polygon.
     pub points: Vec<Uuid>,
+    /// Whether we are building a cutout (Room tool only).
+    pub building_cutout: bool,
 }
 
 /// Visibility modes controlling which geometry layers are rendered.
@@ -76,8 +108,7 @@ pub struct EditorState {
     pub active_tool: Tool,
     pub selection: Selection,
     pub canvas: Canvas,
-    pub room_tool: RoomToolState,
-    pub polygon_tool: PolygonToolState,
+    pub tool_state: ToolState,
     pub visibility: VisibilityMode,
 }
 
@@ -87,8 +118,7 @@ impl Default for EditorState {
             active_tool: Tool::Select,
             selection: Selection::None,
             canvas: Canvas::default(),
-            room_tool: RoomToolState::default(),
-            polygon_tool: PolygonToolState::default(),
+            tool_state: ToolState::default(),
             visibility: VisibilityMode::All,
         }
     }

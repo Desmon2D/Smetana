@@ -38,7 +38,8 @@ src/
 │   └── property_edits.rs    # UI helpers: labeled_drag, labeled_value, labeled_drag_override
 ├── model/                   # Pure data types (serde-serializable)
 │   ├── point.rs             # Point { id, position: DVec2, height: f64 }
-│   ├── edge.rs              # Edge { id, point_a, point_b, distance_override, angle_override }; geometry utils
+│   ├── edge.rs              # Edge { id, point_a, point_b, distance_override, angle_override }
+│   ├── geometry.rs          # Free geometry functions: shoelace_area, distance_to_segment, point_in_polygon, etc.
 │   ├── room.rs              # Room { id, name, points, cutouts }; floor_area, perimeter
 │   ├── wall.rs              # Wall { id, points, color } — visual polygon
 │   ├── opening.rs           # Opening { id, points, kind: OpeningKind }
@@ -47,7 +48,7 @@ src/
 ├── editor/                  # Canvas viewport and drawing tools
 │   ├── canvas.rs            # Canvas viewport: pan/zoom, world↔screen coordinate conversion, grid
 │   ├── snap.rs              # Snap: point (15px screen radius) > grid
-│   └── mod.rs               # Tool, Selection, RoomToolState, PolygonToolState, VisibilityMode, EditorState
+│   └── mod.rs               # Tool, Selection (with helper methods), ToolState, VisibilityMode, EditorState
 └── persistence.rs           # Save/load project JSON to saves/projects/
 ```
 
@@ -71,10 +72,12 @@ All geometry is built from **Points** as the fundamental primitive:
 - **Manual room creation**: Users click existing points to define room contours. No automatic room detection. Cutouts are added via a button in the room properties panel.
 - **Cascade delete**: `remove_point(id)` removes all edges, rooms, walls, and openings referencing that point. `remove_room/wall/opening` only removes the specific object.
 - **Edge deduplication**: `ensure_edge(a, b)` is direction-agnostic — returns existing edge whether stored as (a,b) or (b,a). `find_edge(a, b)` likewise.
-- **History (snapshot undo)**: `History` stores `VecDeque<(Project, &'static str)>` for undo/redo. `snapshot()` clones the entire `Project`. 100-entry cap. `version` counter increments on every mutation.
+- **History (snapshot undo)**: `History` stores `VecDeque<Project>` for undo/redo. `snapshot()` clones the entire `Project`. 100-entry cap. `version` counter increments on every mutation.
 - **Edit snapshot batching**: `edit_snapshot_version: Option<u64>` ensures DragValue property edits accumulate into a single undo step per editing session.
+- **Selection helpers**: `Selection` enum has `.point()`, `.edge()`, `.room()`, `.wall()`, `.opening()`, `.label()` methods returning `Option<Uuid>` for concise extraction.
+- **resolve_positions**: `Project::resolve_positions(ids)` converts a slice of point UUIDs to `Vec<DVec2>`, used in hit-testing, polygon rendering, and area computation.
 - **Canvas hit-testing**: Priority order (front to back): Points > Labels > Edges > Openings > Walls > Rooms. All hit-testing in world space with screen-pixel thresholds converted via zoom factor.
-- **Polygon tool pattern**: Wall, Door, and Window tools share `handle_polygon_tool()` — click existing points to collect UUIDs, close by clicking first point or pressing Enter, finalize creates the appropriate object.
+- **Contour tool pattern**: Room, Wall, Door, and Window tools share `handle_contour_tool()` and a single `ToolState { points, building_cutout }` — click existing points to collect UUIDs, close by clicking first point or pressing Enter, `finalize_contour()` creates the appropriate object.
 - **Visibility modes**: `VisibilityMode::All` (everything), `Wireframe` (points + edges only), `Rooms` (points + rooms, no wall fills).
 - **Canvas label scaling**: All canvas label font sizes multiplied by `App.label_scale` (default 1.0, range 0.5–3.0).
 - **Per-project defaults**: `ProjectDefaults` holds default point height, door/window dimensions. Configured at project creation and editable via "Настройки" window.

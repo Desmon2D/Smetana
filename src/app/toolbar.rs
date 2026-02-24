@@ -74,6 +74,12 @@ pub(super) fn show_defaults_form(ui: &mut egui::Ui, defaults: &mut ProjectDefaul
 }
 
 impl App {
+    fn close_new_project_dialog(&mut self) {
+        self.new_project_name.clear();
+        self.new_project_defaults = ProjectDefaults::default();
+        self.show_new_project_dialog = false;
+    }
+
     pub(super) fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
         let (ctrl_z, ctrl_y, ctrl_shift_z, ctrl_n, ctrl_o, ctrl_s) = ctx.input(|i| {
             (
@@ -127,22 +133,15 @@ impl App {
             ui.horizontal(|ui| {
                 ui.label("Инструмент:");
 
-                let tool = &mut self.editor.active_tool;
-                let prev_tool = *tool;
-                ui.selectable_value(tool, Tool::Select, "Выбор (V)");
-                ui.selectable_value(tool, Tool::Point, "Точка (P)");
-                ui.selectable_value(tool, Tool::Room, "Комната (R)");
-                ui.selectable_value(tool, Tool::Wall, "Стена (W)");
-                ui.selectable_value(tool, Tool::Door, "Дверь (D)");
-                ui.selectable_value(tool, Tool::Window, "Окно (O)");
-                ui.selectable_value(tool, Tool::Label, "Подпись (T)");
-
-                // Clear tool states on toolbar switch
-                if *tool != prev_tool {
-                    self.editor.room_tool.points.clear();
-                    self.editor.room_tool.building_cutout = false;
-                    self.editor.polygon_tool.points.clear();
-                }
+                let mut tool = self.editor.active_tool;
+                ui.selectable_value(&mut tool, Tool::Select, "Выбор (V)");
+                ui.selectable_value(&mut tool, Tool::Point, "Точка (P)");
+                ui.selectable_value(&mut tool, Tool::Room, "Комната (R)");
+                ui.selectable_value(&mut tool, Tool::Wall, "Стена (W)");
+                ui.selectable_value(&mut tool, Tool::Door, "Дверь (D)");
+                ui.selectable_value(&mut tool, Tool::Window, "Окно (O)");
+                ui.selectable_value(&mut tool, Tool::Label, "Подпись (T)");
+                self.set_tool(tool);
 
                 ui.separator();
 
@@ -213,22 +212,16 @@ impl App {
                         {
                             let name = self.new_project_name.trim().to_string();
                             let defaults = self.new_project_defaults.clone();
-                            self.new_project_name.clear();
-                            self.new_project_defaults = ProjectDefaults::default();
-                            self.show_new_project_dialog = false;
+                            self.close_new_project_dialog();
                             self.create_new_project(name, defaults);
                         }
                         if ui.button("Отмена").clicked() {
-                            self.new_project_name.clear();
-                            self.new_project_defaults = ProjectDefaults::default();
-                            self.show_new_project_dialog = false;
+                            self.close_new_project_dialog();
                         }
                     });
                 });
             if !open {
-                self.new_project_name.clear();
-                self.new_project_defaults = ProjectDefaults::default();
-                self.show_new_project_dialog = false;
+                self.close_new_project_dialog();
             }
         }
     }
@@ -270,10 +263,7 @@ impl App {
                     ui.label(format!("Комнаты ({})", self.project.rooms.len()));
                     ui.add_space(4.0);
 
-                    let selected_room = match self.editor.selection {
-                        Selection::Room(id) => Some(id),
-                        _ => None,
-                    };
+                    let selected_room = self.editor.selection.room();
 
                     let mut clicked_room = None;
                     for room in &self.project.rooms {
@@ -295,10 +285,7 @@ impl App {
                         ui.label(format!("Подписи ({})", self.project.labels.len()));
                         ui.add_space(4.0);
 
-                        let selected_label = match self.editor.selection {
-                            Selection::Label(id) => Some(id),
-                            _ => None,
-                        };
+                        let selected_label = self.editor.selection.label();
 
                         let mut clicked_label = None;
                         for label in &self.project.labels {

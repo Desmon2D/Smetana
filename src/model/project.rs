@@ -129,6 +129,13 @@ impl Project {
         self.openings.iter_mut().find(|o| o.id == id)
     }
 
+    /// Resolve a list of point IDs to their world-space positions.
+    pub fn resolve_positions(&self, ids: &[Uuid]) -> Vec<DVec2> {
+        ids.iter()
+            .filter_map(|id| self.point(*id).map(|p| p.position))
+            .collect()
+    }
+
     // --- Edge lookup (direction-agnostic) ---
 
     pub fn find_edge(&self, a: Uuid, b: Uuid) -> Option<&Edge> {

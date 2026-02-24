@@ -2,8 +2,19 @@ use eframe::egui;
 use glam::DVec2;
 
 use super::App;
-use crate::editor::{Canvas, Selection, Tool};
+use crate::editor::{Canvas, Tool};
 use crate::model::{OpeningKind, Project};
+
+const ROOM_COLORS: &[(u8, u8, u8)] = &[
+    (70, 130, 180),
+    (60, 179, 113),
+    (218, 165, 32),
+    (178, 102, 178),
+    (205, 92, 92),
+    (72, 209, 204),
+    (244, 164, 96),
+    (123, 104, 238),
+];
 
 // ---------------------------------------------------------------------------
 // Coordinate helpers
@@ -21,10 +32,10 @@ fn polygon_screen_coords(
     canvas: &Canvas,
     center: egui::Pos2,
 ) -> Vec<egui::Pos2> {
-    point_ids
+    project
+        .resolve_positions(point_ids)
         .iter()
-        .filter_map(|id| project.point(*id))
-        .map(|p| world_to_screen(canvas, center, p.position))
+        .map(|&pos| world_to_screen(canvas, center, pos))
         .collect()
 }
 
@@ -174,21 +185,7 @@ impl App {
 
         let center = rect.center();
 
-        const ROOM_COLORS: &[(u8, u8, u8)] = &[
-            (70, 130, 180),
-            (60, 179, 113),
-            (218, 165, 32),
-            (178, 102, 178),
-            (205, 92, 92),
-            (72, 209, 204),
-            (244, 164, 96),
-            (123, 104, 238),
-        ];
-
-        let selected_room_id = match self.editor.selection {
-            Selection::Room(id) => Some(id),
-            _ => None,
-        };
+        let selected_room_id = self.editor.selection.room();
 
         for (i, room) in self.project.rooms.iter().enumerate() {
             let screen_pts =
@@ -275,10 +272,7 @@ impl App {
         let center = rect.center();
         let wall_outline = egui::Color32::from_rgb(40, 40, 42);
 
-        let selected_wall_id = match self.editor.selection {
-            Selection::Wall(id) => Some(id),
-            _ => None,
-        };
+        let selected_wall_id = self.editor.selection.wall();
 
         for wall in &self.project.walls {
             let screen_pts =
@@ -332,10 +326,7 @@ impl App {
 
         let center = rect.center();
 
-        let selected_opening_id = match self.editor.selection {
-            Selection::Opening(id) => Some(id),
-            _ => None,
-        };
+        let selected_opening_id = self.editor.selection.opening();
 
         for opening in &self.project.openings {
             let screen_pts =
@@ -407,10 +398,7 @@ impl App {
     pub(super) fn draw_edges(&self, painter: &egui::Painter, rect: egui::Rect) {
         let center = rect.center();
 
-        let selected_edge_id = match self.editor.selection {
-            Selection::Edge(id) => Some(id),
-            _ => None,
-        };
+        let selected_edge_id = self.editor.selection.edge();
 
         let normal_color = egui::Color32::from_rgb(160, 160, 170);
         let selected_color = egui::Color32::from_rgb(60, 160, 255);
@@ -446,10 +434,7 @@ impl App {
     pub(super) fn draw_points(&self, painter: &egui::Painter, rect: egui::Rect) {
         let center = rect.center();
 
-        let selected_point_id = match self.editor.selection {
-            Selection::Point(id) => Some(id),
-            _ => None,
-        };
+        let selected_point_id = self.editor.selection.point();
 
         for point in &self.project.points {
             let screen = world_to_screen(&self.editor.canvas, center, point.position);
@@ -533,17 +518,6 @@ impl App {
         }
 
         // Room name + area at centroid
-        const ROOM_COLORS: &[(u8, u8, u8)] = &[
-            (70, 130, 180),
-            (60, 179, 113),
-            (218, 165, 32),
-            (178, 102, 178),
-            (205, 92, 92),
-            (72, 209, 204),
-            (244, 164, 96),
-            (123, 104, 238),
-        ];
-
         for (i, room) in self.project.rooms.iter().enumerate() {
             let screen_pts =
                 polygon_screen_coords(&room.points, &self.project, &self.editor.canvas, center);
@@ -584,10 +558,7 @@ impl App {
 
     pub(super) fn draw_labels(&self, painter: &egui::Painter, rect: egui::Rect) {
         let center = rect.center();
-        let selected_label_id = match self.editor.selection {
-            Selection::Label(id) => Some(id),
-            _ => None,
-        };
+        let selected_label_id = self.editor.selection.label();
 
         let normal_color = egui::Color32::from_rgb(220, 220, 225);
         let selected_color = egui::Color32::from_rgb(255, 255, 255);
@@ -649,49 +620,21 @@ impl App {
         };
         let cursor_screen = world_to_screen(&self.editor.canvas, center, cursor_world);
 
-        match self.editor.active_tool {
-            Tool::Room => {
-                self.draw_polygon_preview(
-                    painter,
-                    center,
-                    cursor_screen,
-                    &self.editor.room_tool.points,
-                    egui::Color32::from_rgba_premultiplied(70, 180, 130, 160),
-                    true, // close to first point
-                );
-            }
-            Tool::Wall => {
-                self.draw_polygon_preview(
-                    painter,
-                    center,
-                    cursor_screen,
-                    &self.editor.polygon_tool.points,
-                    egui::Color32::from_rgba_premultiplied(180, 180, 180, 160),
-                    true,
-                );
-            }
-            Tool::Door => {
-                self.draw_polygon_preview(
-                    painter,
-                    center,
-                    cursor_screen,
-                    &self.editor.polygon_tool.points,
-                    egui::Color32::from_rgba_premultiplied(180, 120, 60, 160),
-                    true,
-                );
-            }
-            Tool::Window => {
-                self.draw_polygon_preview(
-                    painter,
-                    center,
-                    cursor_screen,
-                    &self.editor.polygon_tool.points,
-                    egui::Color32::from_rgba_premultiplied(80, 160, 220, 160),
-                    true,
-                );
-            }
-            _ => {}
-        }
+        let color = match self.editor.active_tool {
+            Tool::Room => egui::Color32::from_rgba_premultiplied(70, 180, 130, 160),
+            Tool::Wall => egui::Color32::from_rgba_premultiplied(180, 180, 180, 160),
+            Tool::Door => egui::Color32::from_rgba_premultiplied(180, 120, 60, 160),
+            Tool::Window => egui::Color32::from_rgba_premultiplied(80, 160, 220, 160),
+            _ => return,
+        };
+        self.draw_polygon_preview(
+            painter,
+            center,
+            cursor_screen,
+            &self.editor.tool_state.points,
+            color,
+            true,
+        );
     }
 
     /// Draw a ghost polygon preview for polygon-based tools.

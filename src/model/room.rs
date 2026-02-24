@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::Project;
-use super::edge::shoelace_area;
+use super::geometry::shoelace_area;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Room {
@@ -77,11 +77,7 @@ impl Room {
     }
 
     fn area_from_coordinates(&self, contour: &[Uuid], project: &Project) -> f64 {
-        let positions: Vec<DVec2> = contour
-            .iter()
-            .filter_map(|id| project.point(*id).map(|p| p.position))
-            .collect();
-        shoelace_area(&positions)
+        shoelace_area(&project.resolve_positions(contour))
     }
 
     fn area_from_measurements(&self, contour: &[Uuid], project: &Project) -> f64 {

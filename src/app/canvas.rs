@@ -55,47 +55,25 @@ fn hit_test(world_pos: DVec2, project: &crate::model::Project, zoom: f32) -> Hit
 
     // 4. Openings (polygon)
     for opening in &project.openings {
-        let polygon: Vec<DVec2> = opening
-            .points
-            .iter()
-            .filter_map(|id| project.point(*id))
-            .map(|p| p.position)
-            .collect();
-        if point_in_polygon(world_pos, &polygon) {
+        if point_in_polygon(world_pos, &project.resolve_positions(&opening.points)) {
             return HitResult::Opening(opening.id);
         }
     }
 
     // 5. Walls (polygon)
     for wall in &project.walls {
-        let polygon: Vec<DVec2> = wall
-            .points
-            .iter()
-            .filter_map(|id| project.point(*id))
-            .map(|p| p.position)
-            .collect();
-        if point_in_polygon(world_pos, &polygon) {
+        if point_in_polygon(world_pos, &project.resolve_positions(&wall.points)) {
             return HitResult::Wall(wall.id);
         }
     }
 
     // 6. Rooms (polygon, excluding cutouts)
     for room in &project.rooms {
-        let polygon: Vec<DVec2> = room
-            .points
-            .iter()
-            .filter_map(|id| project.point(*id))
-            .map(|p| p.position)
-            .collect();
-        if point_in_polygon(world_pos, &polygon) {
-            let in_cutout = room.cutouts.iter().any(|c| {
-                let cutout_poly: Vec<DVec2> = c
-                    .iter()
-                    .filter_map(|id| project.point(*id))
-                    .map(|p| p.position)
-                    .collect();
-                point_in_polygon(world_pos, &cutout_poly)
-            });
+        if point_in_polygon(world_pos, &project.resolve_positions(&room.points)) {
+            let in_cutout = room
+                .cutouts
+                .iter()
+                .any(|c| point_in_polygon(world_pos, &project.resolve_positions(c)));
             if !in_cutout {
                 return HitResult::Room(room.id);
             }
@@ -137,9 +115,8 @@ impl App {
                 Tool::Point => {
                     self.handle_point_tool(&response, rect, shift_held, space_held);
                 }
-                Tool::Room => self.handle_room_tool(ui, &response, rect, space_held),
-                Tool::Wall | Tool::Door | Tool::Window => {
-                    self.handle_polygon_tool(ui, &response, rect, space_held);
+                Tool::Room | Tool::Wall | Tool::Door | Tool::Window => {
+                    self.handle_contour_tool(ui, &response, rect, space_held);
                 }
                 Tool::Label => self.handle_label_tool(&response, rect, space_held),
             }
@@ -290,7 +267,7 @@ impl App {
                 Selection::Point(_) | Selection::Label(_)
             )
         {
-            self.history.snapshot(&self.project, "drag");
+            self.history.snapshot(&self.project);
         }
 
         if !response.dragged_by(egui::PointerButton::Primary) || space_held {
@@ -368,15 +345,15 @@ impl App {
             // Create new point at snapped position
             let point = Point::new(snap_result.position, self.project.defaults.point_height);
             let point_id = point.id;
-            self.history.snapshot(&self.project, "add point");
+            self.history.snapshot(&self.project);
             self.project.points.push(point);
             self.editor.selection = Selection::Point(point_id);
         }
     }
 
-    // ---- Room tool ----------------------------------------------------------
+    // ---- Contour tools (Room, Wall, Door, Window) ---------------------------
 
-    fn handle_room_tool(
+    fn handle_contour_tool(
         &mut self,
         ui: &egui::Ui,
         response: &egui::Response,
@@ -397,157 +374,86 @@ impl App {
                 snap_to_point(world_pos, &self.project.points, self.editor.canvas.zoom)
             {
                 // Avoid duplicate consecutive points
-                if self.editor.room_tool.points.last() == Some(&point_id) {
+                if self.editor.tool_state.points.last() == Some(&point_id) {
                     return;
                 }
 
                 // If clicking first point and enough collected, close the contour
-                if self.editor.room_tool.points.len() >= 3
-                    && point_id == self.editor.room_tool.points[0]
+                if self.editor.tool_state.points.len() >= 3
+                    && point_id == self.editor.tool_state.points[0]
                 {
-                    self.finalize_room();
+                    self.finalize_contour();
                     return;
                 }
 
-                self.editor.room_tool.points.push(point_id);
+                self.editor.tool_state.points.push(point_id);
             }
         }
 
         // Enter to finalize
         if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            self.finalize_room();
+            self.finalize_contour();
         }
 
         // Escape to cancel
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.editor.room_tool.points.clear();
-            self.editor.room_tool.building_cutout = false;
+            self.editor.tool_state.points.clear();
+            self.editor.tool_state.building_cutout = false;
         }
     }
 
-    fn finalize_room(&mut self) {
-        if self.editor.room_tool.points.len() < 3 {
+    fn finalize_contour(&mut self) {
+        if self.editor.tool_state.points.len() < 3 {
             return;
         }
 
-        let points = self.editor.room_tool.points.clone();
-
-        if self.editor.room_tool.building_cutout {
-            // Adding a cutout to the selected room
-            if let Selection::Room(room_id) = self.editor.selection {
-                self.history.snapshot(&self.project, "add cutout");
-                self.project.ensure_contour_edges(&points);
-                if let Some(room) = self.project.rooms.iter_mut().find(|r| r.id == room_id) {
-                    room.cutouts.push(points);
-                }
-            }
-            self.editor.room_tool.points.clear();
-            self.editor.room_tool.building_cutout = false;
-        } else {
-            // Creating a new room
-            self.history.snapshot(&self.project, "add room");
-
-            let room = Room::new(
-                format!("Комната {}", self.project.rooms.len() + 1),
-                points.clone(),
-            );
-
-            self.project.ensure_contour_edges(&points);
-            let room_id = room.id;
-            self.project.rooms.push(room);
-
-            self.editor.room_tool.points.clear();
-            self.editor.room_tool.building_cutout = false;
-            self.editor.selection = Selection::Room(room_id);
-        }
-    }
-
-    // ---- Polygon tools (Wall, Door, Window) ---------------------------------
-
-    fn handle_polygon_tool(
-        &mut self,
-        ui: &egui::Ui,
-        response: &egui::Response,
-        rect: egui::Rect,
-        space_held: bool,
-    ) {
-        if response.clicked()
-            && !space_held
-            && let Some(hover) = response.hover_pos()
-        {
-            let world_pos = self
-                .editor
-                .canvas
-                .screen_to_world_dvec2(hover, rect.center());
-
-            // Must click on existing point
-            if let Some(point_id) =
-                snap_to_point(world_pos, &self.project.points, self.editor.canvas.zoom)
-            {
-                // Avoid duplicate consecutive
-                if self.editor.polygon_tool.points.last() == Some(&point_id) {
-                    return;
-                }
-
-                // Close if clicking first point and enough collected
-                if self.editor.polygon_tool.points.len() >= 3
-                    && point_id == self.editor.polygon_tool.points[0]
-                {
-                    self.finalize_polygon();
-                    return;
-                }
-
-                self.editor.polygon_tool.points.push(point_id);
-            }
-        }
-
-        // Enter to finalize
-        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            self.finalize_polygon();
-        }
-
-        // Escape to cancel
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.editor.polygon_tool.points.clear();
-        }
-    }
-
-    fn finalize_polygon(&mut self) {
-        if self.editor.polygon_tool.points.len() < 3 {
-            return;
-        }
-
-        let points = self.editor.polygon_tool.points.clone();
-        self.editor.polygon_tool.points.clear();
+        let points = self.editor.tool_state.points.clone();
+        self.editor.tool_state.points.clear();
 
         match self.editor.active_tool {
+            Tool::Room if self.editor.tool_state.building_cutout => {
+                // Adding a cutout to the selected room
+                if let Some(room_id) = self.editor.selection.room() {
+                    self.history.snapshot(&self.project);
+                    self.project.ensure_contour_edges(&points);
+                    if let Some(room) = self.project.rooms.iter_mut().find(|r| r.id == room_id) {
+                        room.cutouts.push(points);
+                    }
+                }
+                self.editor.tool_state.building_cutout = false;
+            }
+            Tool::Room => {
+                self.history.snapshot(&self.project);
+                let room = Room::new(
+                    format!("Комната {}", self.project.rooms.len() + 1),
+                    points.clone(),
+                );
+                self.project.ensure_contour_edges(&points);
+                let room_id = room.id;
+                self.project.rooms.push(room);
+                self.editor.selection = Selection::Room(room_id);
+            }
             Tool::Wall => {
-                self.history.snapshot(&self.project, "add wall");
+                self.history.snapshot(&self.project);
                 let wall = Wall::new(points.clone());
                 let wall_id = wall.id;
                 self.project.ensure_contour_edges(&points);
                 self.project.walls.push(wall);
                 self.editor.selection = Selection::Wall(wall_id);
             }
-            Tool::Door => {
-                self.history.snapshot(&self.project, "add door");
-                let kind = OpeningKind::Door {
-                    height: self.project.defaults.door_height,
-                    width: self.project.defaults.door_width,
-                };
-                let opening = Opening::new(points.clone(), kind);
-                let opening_id = opening.id;
-                self.project.ensure_contour_edges(&points);
-                self.project.openings.push(opening);
-                self.editor.selection = Selection::Opening(opening_id);
-            }
-            Tool::Window => {
-                self.history.snapshot(&self.project, "add window");
-                let kind = OpeningKind::Window {
-                    height: self.project.defaults.window_height,
-                    width: self.project.defaults.window_width,
-                    sill_height: self.project.defaults.window_sill_height,
-                    reveal_width: self.project.defaults.window_reveal_width,
+            Tool::Door | Tool::Window => {
+                self.history.snapshot(&self.project);
+                let kind = match self.editor.active_tool {
+                    Tool::Door => OpeningKind::Door {
+                        height: self.project.defaults.door_height,
+                        width: self.project.defaults.door_width,
+                    },
+                    _ => OpeningKind::Window {
+                        height: self.project.defaults.window_height,
+                        width: self.project.defaults.window_width,
+                        sill_height: self.project.defaults.window_sill_height,
+                        reveal_width: self.project.defaults.window_reveal_width,
+                    },
                 };
                 let opening = Opening::new(points.clone(), kind);
                 let opening_id = opening.id;
@@ -572,7 +478,7 @@ impl App {
                 .screen_to_world_dvec2(hover, rect.center());
             let label = Label::new("Подпись".to_string(), world_pt);
             let label_id = label.id;
-            self.history.snapshot(&self.project, "add label");
+            self.history.snapshot(&self.project);
             self.project.labels.push(label);
             self.editor.selection = Selection::Label(label_id);
         }
