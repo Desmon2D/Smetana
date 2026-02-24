@@ -26,30 +26,18 @@ Rust edition: 2024. Requires a nightly or recent stable toolchain that supports 
 
 ```
 src/
-├── main.rs                  # Entry point, eframe initialization (1280x720 window)
-├── app/                     # UI rendering and input handling
-│   ├── mod.rs               # App struct, AppScreen enum, eframe::App impl, project management
-│   ├── history.rs           # Snapshot-based History (undo/redo with VecDeque<Project>)
-│   ├── canvas.rs            # Central panel: pan/zoom, tool dispatch, hit-testing
-│   ├── canvas_draw.rs       # Rendering: room/wall/opening fills, edges, points, labels, previews
-│   ├── toolbar.rs           # Top toolbar, left panel, keyboard shortcuts, project settings window
-│   ├── project_list.rs      # ProjectList startup screen
-│   ├── properties_panel.rs  # Right panel: property editors for all selection types
-│   └── property_edits.rs    # UI helpers: labeled_drag, labeled_value, labeled_drag_override
-├── model/                   # Pure data types (serde-serializable)
-│   ├── point.rs             # Point { id, position: DVec2, height: f64 }
-│   ├── edge.rs              # Edge { id, point_a, point_b, distance_override, angle_override }
-│   ├── geometry.rs          # Free geometry functions: shoelace_area, distance_to_segment, point_in_polygon, etc.
-│   ├── room.rs              # Room { id, name, points, cutouts }; floor_area, perimeter
-│   ├── wall.rs              # Wall { id, points, color } — visual polygon
-│   ├── opening.rs           # Opening { id, points, kind: OpeningKind }
-│   ├── project.rs           # Project, ProjectDefaults, Label; lookup, mutation, cascade delete
-│   └── mod.rs               # Module re-exports
-├── editor/                  # Canvas viewport and drawing tools
-│   ├── canvas.rs            # Canvas viewport: pan/zoom, world↔screen coordinate conversion, grid
-│   ├── snap.rs              # Snap: point (15px screen radius) > grid
-│   └── mod.rs               # Tool, Selection (with helper methods), ToolState, VisibilityMode, EditorState
-└── persistence.rs           # Save/load project JSON to saves/projects/
+├── main.rs            # Entry point, eframe initialization (1280x720 window)
+├── model.rs           # All data types (Point, Edge, Wall, Opening, Room, Label, Project,
+│                      #   ProjectDefaults), geometry functions, tests (~820 lines)
+├── persistence.rs     # Save/load project JSON to saves/projects/
+└── app/               # UI rendering and input handling
+    ├── mod.rs         # App struct (with editor fields inline), Tool, Selection, Canvas
+    │                  #   viewport, Snap, History, ToolState, VisibilityMode (~565 lines)
+    ├── canvas.rs      # Central panel: pan/zoom, tool dispatch, hit-testing, ALL rendering
+    │                  #   (room/wall/opening fills, edges, points, labels, previews) (~1055 lines)
+    ├── panels.rs      # Top toolbar, left panel, right properties panel, keyboard shortcuts,
+    │                  #   project settings window, UI helpers (labeled_drag, etc.) (~750 lines)
+    └── project_list.rs # ProjectList startup screen (~165 lines)
 ```
 
 ### Data Model (Point-First)
@@ -70,11 +58,11 @@ All geometry is built from **Points** as the fundamental primitive:
 - **Edge overrides**: Each edge has optional `distance_override` and `angle_override`. When set, room area computation switches from coordinate-based Shoelace to measurement-based polygon reconstruction.
 - **OpeningKind enum**: `Door { height, width }` | `Window { height, width, sill_height, reveal_width }` — use pattern matching.
 - **Manual room creation**: Users click existing points to define room contours. No automatic room detection. Cutouts are added via a button in the room properties panel.
-- **Cascade delete**: `remove_point(id)` removes all edges, rooms, walls, and openings referencing that point. `remove_room/wall/opening` only removes the specific object.
+- **Cascade delete**: `remove_point(id)` removes all edges, rooms, walls, and openings referencing that point. `remove_edge/room/wall/opening` only removes the specific object.
 - **Edge deduplication**: `ensure_edge(a, b)` is direction-agnostic — returns existing edge whether stored as (a,b) or (b,a). `find_edge(a, b)` likewise.
 - **History (snapshot undo)**: `History` stores `VecDeque<Project>` for undo/redo. `snapshot()` clones the entire `Project`. 100-entry cap. `version` counter increments on every mutation.
-- **Edit snapshot batching**: `edit_snapshot_version: Option<u64>` ensures DragValue property edits accumulate into a single undo step per editing session.
-- **Selection helpers**: `Selection` enum has `.point()`, `.edge()`, `.room()`, `.wall()`, `.opening()`, `.label()` methods returning `Option<Uuid>` for concise extraction.
+- **Edit snapshot batching**: `ensure_edit_snapshot()` checks `edit_snapshot_version` and takes a snapshot on first edit, so DragValue property edits accumulate into a single undo step.
+- **Selection**: `Selection` enum has `.id() -> Option<Uuid>` to extract the ID regardless of variant. Type-specific checks use `==` comparison (e.g., `self.selection == Selection::Room(room.id)`).
 - **resolve_positions**: `Project::resolve_positions(ids)` converts a slice of point UUIDs to `Vec<DVec2>`, used in hit-testing, polygon rendering, and area computation.
 - **Canvas hit-testing**: Priority order (front to back): Points > Labels > Edges > Openings > Walls > Rooms. All hit-testing in world space with screen-pixel thresholds converted via zoom factor.
 - **Contour tool pattern**: Room, Wall, Door, and Window tools share `handle_contour_tool()` and a single `ToolState { points, building_cutout }` — click existing points to collect UUIDs, close by clicking first point or pressing Enter, `finalize_contour()` creates the appropriate object.
@@ -82,7 +70,8 @@ All geometry is built from **Points** as the fundamental primitive:
 - **Canvas label scaling**: All canvas label font sizes multiplied by `App.label_scale` (default 1.0, range 0.5–3.0).
 - **Per-project defaults**: `ProjectDefaults` holds default point height, door/window dimensions. Configured at project creation and editable via "Настройки" window.
 - **Render order** (back to front): Grid → Room fills (earcutr triangulation with cutout holes) → Wall fills → Opening fills → Edges → Points → Measurement labels → Labels → Tool preview.
-- **UI helpers**: `labeled_drag()`, `labeled_value()`, `labeled_drag_override()` in `property_edits.rs` reduce boilerplate in property editors.
+- **App struct**: Editor state (tool, selection, canvas, tool_state, visibility) lives directly in `App` — no separate `EditorState` wrapper. All `impl App` blocks in submodules access these fields directly.
+- **UI helpers**: `labeled_drag()`, `labeled_value()`, `labeled_drag_override()` in `panels.rs` reduce boilerplate in property editors.
 
 ### App Screens
 

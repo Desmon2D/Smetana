@@ -1,8 +1,7 @@
 use eframe::egui;
 
 use super::App;
-use super::toolbar::show_defaults_form;
-use crate::model::ProjectDefaults;
+use super::panels::show_defaults_form;
 use crate::persistence::delete_project;
 
 fn format_system_time(t: std::time::SystemTime) -> String {
@@ -14,7 +13,6 @@ fn format_system_time(t: std::time::SystemTime) -> String {
             let hours = time_of_day / 3600;
             let minutes = (time_of_day % 3600) / 60;
 
-            // Simple date calculation from days since epoch
             let (year, month, day) = days_to_ymd(days);
             format!(
                 "{:02}.{:02}.{} {:02}:{:02}",
@@ -26,7 +24,6 @@ fn format_system_time(t: std::time::SystemTime) -> String {
 }
 
 fn days_to_ymd(days_since_epoch: u64) -> (u64, u64, u64) {
-    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
     let z = days_since_epoch + 719468;
     let era = z / 146097;
     let doe = z - era * 146097;
@@ -59,8 +56,7 @@ impl App {
                 {
                     let name = self.new_project_name.trim().to_string();
                     let defaults = self.new_project_defaults.clone();
-                    self.new_project_name.clear();
-                    self.new_project_defaults = ProjectDefaults::default();
+                    self.close_new_project_form();
                     self.create_new_project(name, defaults);
                 }
             });

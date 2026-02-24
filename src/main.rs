@@ -1,5 +1,4 @@
 mod app;
-mod editor;
 mod model;
 mod persistence;
 
