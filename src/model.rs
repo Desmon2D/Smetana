@@ -940,6 +940,78 @@ impl Project {
         // Remove the point itself.
         self.points.retain(|p| p.id != id);
     }
+
+    // --- Merge points ---
+
+    /// Merge `remove_id` into `keep_id`: replace all references to `remove_id`
+    /// with `keep_id`, clean up degenerate structures, then delete the point.
+    pub fn merge_points(&mut self, keep_id: Uuid, remove_id: Uuid) {
+        // Replace in rooms (main contours + cutouts).
+        for room in &mut self.rooms {
+            replace_in_contour(&mut room.points, remove_id, keep_id);
+            for cutout in &mut room.cutouts {
+                replace_in_contour(cutout, remove_id, keep_id);
+            }
+            room.cutouts.retain(|c| c.len() >= 3);
+        }
+        self.rooms.retain(|r| r.points.len() >= 3);
+
+        // Replace in walls.
+        for wall in &mut self.walls {
+            replace_in_contour(&mut wall.points, remove_id, keep_id);
+        }
+        self.walls.retain(|w| w.points.len() >= 3);
+
+        // Replace in openings.
+        for opening in &mut self.openings {
+            replace_in_contour(&mut opening.points, remove_id, keep_id);
+        }
+        self.openings.retain(|o| o.points.len() >= 3);
+
+        // Replace in edges.
+        for edge in &mut self.edges {
+            if edge.point_a == remove_id {
+                edge.point_a = keep_id;
+            }
+            if edge.point_b == remove_id {
+                edge.point_b = keep_id;
+            }
+        }
+        // Remove self-loops.
+        self.edges.retain(|e| e.point_a != e.point_b);
+        // Remove duplicate edges (same pair regardless of direction).
+        let mut seen: Vec<(Uuid, Uuid)> = Vec::new();
+        self.edges.retain(|e| {
+            let pair = if e.point_a < e.point_b {
+                (e.point_a, e.point_b)
+            } else {
+                (e.point_b, e.point_a)
+            };
+            if seen.contains(&pair) {
+                false
+            } else {
+                seen.push(pair);
+                true
+            }
+        });
+
+        // Remove the merged point.
+        self.points.retain(|p| p.id != remove_id);
+    }
+}
+
+/// Replace `from` with `to` in a contour and remove consecutive duplicates.
+fn replace_in_contour(contour: &mut Vec<Uuid>, from: Uuid, to: Uuid) {
+    for pid in contour.iter_mut() {
+        if *pid == from {
+            *pid = to;
+        }
+    }
+    contour.dedup();
+    // For closed contours, also check wrap-around (first == last).
+    if contour.len() >= 2 && contour.first() == contour.last() {
+        contour.pop();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1412,5 +1484,85 @@ mod tests {
         assert_eq!(project.points.len(), 2);
         assert_eq!(project.edges.len(), 0); // both edges removed, no contour→no new edge
         assert!(project.point(b).is_none());
+    }
+
+    // -- Merge point tests --
+
+    #[test]
+    fn test_merge_points_edges() {
+        let mut project = Project::new("test".to_string());
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let c = Uuid::new_v4();
+        project.points.push(make_point(a, 0.0, 0.0));
+        project.points.push(make_point(b, 1000.0, 0.0));
+        project.points.push(make_point(c, 1000.0, 0.0)); // same pos as b
+        project.ensure_edge(a, b);
+        project.ensure_edge(a, c);
+
+        project.merge_points(b, c);
+
+        assert_eq!(project.points.len(), 2);
+        assert!(project.point(c).is_none());
+        // Edge a-c became a-b; duplicate a-b collapsed to one.
+        assert_eq!(project.edges.len(), 1);
+        assert!(project.find_edge(a, b).is_some());
+    }
+
+    #[test]
+    fn test_merge_points_self_loop_removed() {
+        let mut project = Project::new("test".to_string());
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        project.points.push(make_point(a, 0.0, 0.0));
+        project.points.push(make_point(b, 0.0, 0.0));
+        project.ensure_edge(a, b);
+
+        project.merge_points(a, b);
+
+        assert_eq!(project.points.len(), 1);
+        // Edge a-b became a-a → self-loop removed.
+        assert_eq!(project.edges.len(), 0);
+    }
+
+    #[test]
+    fn test_merge_points_room_contour() {
+        let (mut project, room_id) = make_rect_project();
+        // Room has 4 points. Merge point[1] into point[0] (adjacent).
+        let room = project.room(room_id).unwrap();
+        let keep = room.points[0];
+        let remove = room.points[1];
+
+        project.merge_points(keep, remove);
+
+        // Room should survive with 3 points (consecutive duplicate removed).
+        assert_eq!(project.rooms.len(), 1);
+        let room = &project.rooms[0];
+        assert_eq!(room.points.len(), 3);
+        assert!(!room.points.contains(&remove));
+        assert!(project.point(remove).is_none());
+    }
+
+    #[test]
+    fn test_merge_points_room_degenerate() {
+        // Triangle room: merging two adjacent points → 2-point contour → removed.
+        let mut project = Project::new("test".to_string());
+        let ids: Vec<Uuid> = (0..3).map(|_| Uuid::new_v4()).collect();
+        let positions = [
+            DVec2::new(0.0, 0.0),
+            DVec2::new(1000.0, 0.0),
+            DVec2::new(500.0, 1000.0),
+        ];
+        for (i, &id) in ids.iter().enumerate() {
+            project.points.push(make_point(id, positions[i].x, positions[i].y));
+        }
+        project.ensure_contour_edges(&ids);
+        project.rooms.push(Room::new("R".to_string(), ids.clone(), Room::default_color()));
+
+        project.merge_points(ids[0], ids[1]);
+
+        // Room becomes degenerate (2 unique points) → removed.
+        assert_eq!(project.rooms.len(), 0);
+        assert_eq!(project.points.len(), 2);
     }
 }

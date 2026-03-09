@@ -298,6 +298,21 @@ impl App {
         }
 
         if !response.dragged_by(egui::PointerButton::Primary) || space_held {
+            // Check for merge on drag release.
+            if response.drag_stopped() && !space_held && self.dragging_room_name.is_none()
+                && let Selection::Point(pid) = self.selection
+            {
+                let pos = self.project.point(pid).map(|p| p.position);
+                if let Some(pos) = pos {
+                    let merge_target = self.project.points.iter()
+                        .find(|p| p.id != pid && p.position.distance(pos) < 0.5)
+                        .map(|p| p.id);
+                    if let Some(target_id) = merge_target {
+                        self.project.merge_points(target_id, pid);
+                        self.selection = Selection::Point(target_id);
+                    }
+                }
+            }
             return;
         }
 
@@ -319,7 +334,21 @@ impl App {
         } else {
             match self.selection {
                 Selection::Point(pid) => {
-                    let snapped = if shift_held {
+                    // Snap to nearby points (excluding self), then grid.
+                    let snap_threshold = 15.0 / self.canvas.zoom as f64;
+                    let target_pos = self.project.points.iter()
+                        .filter(|p| p.id != pid)
+                        .filter(|p| p.position.distance(cursor_pt) < snap_threshold)
+                        .min_by(|a, b| {
+                            a.position.distance(cursor_pt)
+                                .partial_cmp(&b.position.distance(cursor_pt))
+                                .unwrap()
+                        })
+                        .map(|p| p.position);
+
+                    let snapped = if let Some(pos) = target_pos {
+                        pos
+                    } else if shift_held {
                         cursor_pt
                     } else {
                         snap_to_grid(cursor_pt, self.canvas.visible_grid_step())
@@ -376,7 +405,13 @@ impl App {
             !shift_held,
         );
 
-        if let Some(existing_id) = snap_result.snapped_point {
+        // Also check for an existing point at the target position (prevents
+        // duplicates when snap is disabled via Shift).
+        let near_existing = self.project.points.iter()
+            .find(|p| p.position.distance(snap_result.position) < 0.5)
+            .map(|p| p.id);
+
+        if let Some(existing_id) = snap_result.snapped_point.or(near_existing) {
             // Clicked near existing point: just select it.
             self.selection = Selection::Point(existing_id);
         } else if let Some((edge_id, _pa, _pb)) = snap_result.snapped_edge {
