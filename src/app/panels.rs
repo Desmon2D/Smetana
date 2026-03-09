@@ -2,7 +2,7 @@ use eframe::egui;
 
 use super::{App, AppScreen, Selection, Tool};
 use super::viewport::VisibilityMode;
-use crate::model::{OpeningKind, ProjectDefaults};
+use crate::model::{ArrowMode, LinePattern, OpeningKind, ProjectDefaults};
 
 // ---------------------------------------------------------------------------
 // Property edit helpers
@@ -639,6 +639,32 @@ impl App {
                 edge.label_hidden = !edge.label_hidden;
             }
         });
+
+        ui.add_space(4.0);
+
+        // Edge line style
+        ui.label("Стиль линии:");
+        let cur_pattern = self.project.edge(id).map(|e| e.line_pattern).unwrap_or_default();
+        egui::ComboBox::from_id_salt("edge_pattern")
+            .selected_text(cur_pattern.label())
+            .show_ui(ui, |ui| {
+                for &p in LinePattern::ALL {
+                    if ui.selectable_value(&mut self.project.edge_mut(id).unwrap().line_pattern, p, p.label()).changed() {
+                        self.history.mark_dirty();
+                    }
+                }
+            });
+
+        let cur_arrow = self.project.edge(id).map(|e| e.arrow_mode).unwrap_or_default();
+        egui::ComboBox::from_id_salt("edge_arrow")
+            .selected_text(cur_arrow.label())
+            .show_ui(ui, |ui| {
+                for &a in ArrowMode::ALL {
+                    if ui.selectable_value(&mut self.project.edge_mut(id).unwrap().arrow_mode, a, a.label()).changed() {
+                        self.history.mark_dirty();
+                    }
+                }
+            });
 
         ui.add_space(4.0);
         ui.separator();

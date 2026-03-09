@@ -29,6 +29,61 @@ impl Point {
 // Edge
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum LinePattern {
+    #[default]
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+impl LinePattern {
+    pub const ALL: &[LinePattern] = &[LinePattern::Solid, LinePattern::Dashed, LinePattern::Dotted];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            LinePattern::Solid => "Сплошная",
+            LinePattern::Dashed => "Штриховая",
+            LinePattern::Dotted => "Пунктирная",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ArrowMode {
+    #[default]
+    None,
+    Forward,
+    Backward,
+    Both,
+}
+
+impl ArrowMode {
+    pub const ALL: &[ArrowMode] = &[
+        ArrowMode::None,
+        ArrowMode::Forward,
+        ArrowMode::Backward,
+        ArrowMode::Both,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ArrowMode::None => "Нет",
+            ArrowMode::Forward => "A-->>B",
+            ArrowMode::Backward => "A<<--B",
+            ArrowMode::Both => "↔ Обе",
+        }
+    }
+
+    pub fn forward(&self) -> bool {
+        matches!(self, ArrowMode::Forward | ArrowMode::Both)
+    }
+
+    pub fn backward(&self) -> bool {
+        matches!(self, ArrowMode::Backward | ArrowMode::Both)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edge {
     pub id: Uuid,
@@ -47,6 +102,12 @@ pub struct Edge {
     /// If true, measurement label is hidden on canvas.
     #[serde(default)]
     pub label_hidden: bool,
+    /// Visual line pattern.
+    #[serde(default)]
+    pub line_pattern: LinePattern,
+    /// Arrow direction.
+    #[serde(default)]
+    pub arrow_mode: ArrowMode,
 }
 
 impl Edge {
@@ -60,6 +121,8 @@ impl Edge {
             label_flip_side: false,
             label_flip_text: false,
             label_hidden: false,
+            line_pattern: LinePattern::default(),
+            arrow_mode: ArrowMode::default(),
         }
     }
 

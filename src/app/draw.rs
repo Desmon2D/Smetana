@@ -216,6 +216,74 @@ fn draw_window_symbol(
 }
 
 // ---------------------------------------------------------------------------
+// Edge style helpers
+// ---------------------------------------------------------------------------
+
+fn draw_dashed_line(
+    painter: &egui::Painter,
+    from: egui::Pos2,
+    to: egui::Pos2,
+    stroke: egui::Stroke,
+    dash_len: f32,
+    gap_len: f32,
+) {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    let total = (dx * dx + dy * dy).sqrt();
+    if total < 0.01 {
+        return;
+    }
+    let ux = dx / total;
+    let uy = dy / total;
+
+    let mut dist = 0.0;
+    let mut drawing = true;
+    while dist < total {
+        let seg = if drawing { dash_len } else { gap_len };
+        let end_dist = (dist + seg).min(total);
+        if drawing {
+            let p0 = egui::pos2(from.x + ux * dist, from.y + uy * dist);
+            let p1 = egui::pos2(from.x + ux * end_dist, from.y + uy * end_dist);
+            painter.line_segment([p0, p1], stroke);
+        }
+        dist = end_dist;
+        drawing = !drawing;
+    }
+}
+
+fn draw_arrowhead(
+    painter: &egui::Painter,
+    from: egui::Pos2,
+    to: egui::Pos2,
+    line_width: f32,
+    color: egui::Color32,
+) {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 1.0 {
+        return;
+    }
+    let ux = dx / len;
+    let uy = dy / len;
+
+    let arrow_len = (8.0 + line_width * 2.0).min(len * 0.4);
+    let arrow_half_w = arrow_len * 0.4;
+
+    let tip = to;
+    let base_x = tip.x - ux * arrow_len;
+    let base_y = tip.y - uy * arrow_len;
+    let left = egui::pos2(base_x + uy * arrow_half_w, base_y - ux * arrow_half_w);
+    let right = egui::pos2(base_x - uy * arrow_half_w, base_y + ux * arrow_half_w);
+
+    painter.add(egui::Shape::convex_polygon(
+        vec![tip, left, right],
+        color,
+        egui::Stroke::NONE,
+    ));
+}
+
+// ---------------------------------------------------------------------------
 // DrawCtx methods
 // ---------------------------------------------------------------------------
 
@@ -433,8 +501,20 @@ impl DrawCtx<'_> {
                 (normal_color, 1.0)
             };
 
-            self.painter
-                .line_segment([sa, sb], egui::Stroke::new(width, color));
+            let stroke = egui::Stroke::new(width, color);
+
+            match edge.line_pattern {
+                crate::model::LinePattern::Dashed => draw_dashed_line(self.painter, sa, sb, stroke, 10.0, 5.0),
+                crate::model::LinePattern::Dotted => draw_dashed_line(self.painter, sa, sb, stroke, 2.0, 4.0),
+                crate::model::LinePattern::Solid => { self.painter.line_segment([sa, sb], stroke); },
+            }
+
+            if edge.arrow_mode.forward() {
+                draw_arrowhead(self.painter, sa, sb, width, color);
+            }
+            if edge.arrow_mode.backward() {
+                draw_arrowhead(self.painter, sb, sa, width, color);
+            }
         }
     }
 
