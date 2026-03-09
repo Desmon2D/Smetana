@@ -280,6 +280,10 @@ pub struct Room {
     /// Fill color (RGBA).
     #[serde(default = "Room::default_color")]
     pub color: [u8; 4],
+    /// Offset of the room name label from the polygon centroid, in mm.
+    /// `None` means default position (centroid).
+    #[serde(default)]
+    pub name_offset: Option<DVec2>,
 }
 
 impl Room {
@@ -290,11 +294,55 @@ impl Room {
             points,
             cutouts: Vec::new(),
             color,
+            name_offset: None,
         }
     }
 
     pub fn default_color() -> [u8; 4] {
         [70, 130, 180, 45]
+    }
+
+    /// Area-weighted centroid of the room polygon (outer contour minus cutouts).
+    pub fn centroid(&self, project: &Project) -> DVec2 {
+        let outer = project.resolve_positions(&self.points);
+        if outer.len() < 3 {
+            if outer.is_empty() {
+                return DVec2::ZERO;
+            }
+            let sum: DVec2 = outer.iter().copied().sum();
+            return sum / outer.len() as f64;
+        }
+
+        let (outer_area, outer_c) = polygon_area_centroid(&outer);
+        if outer_area < 1e-10 {
+            let sum: DVec2 = outer.iter().copied().sum();
+            return sum / outer.len() as f64;
+        }
+
+        let mut total_area = outer_area;
+        let mut weighted = outer_c * outer_area;
+
+        for cutout in &self.cutouts {
+            let pts = project.resolve_positions(cutout);
+            if pts.len() < 3 {
+                continue;
+            }
+            let (cut_area, cut_c) = polygon_area_centroid(&pts);
+            total_area -= cut_area;
+            weighted -= cut_c * cut_area;
+        }
+
+        if total_area.abs() < 1e-10 {
+            let sum: DVec2 = outer.iter().copied().sum();
+            return sum / outer.len() as f64;
+        }
+
+        weighted / total_area
+    }
+
+    /// World position of the room name label (centroid + offset).
+    pub fn name_position(&self, project: &Project) -> DVec2 {
+        self.centroid(project) + self.name_offset.unwrap_or(DVec2::ZERO)
     }
 
     /// Floor area in mm² (outer contour minus cutouts).
@@ -390,6 +438,31 @@ impl Room {
 // ---------------------------------------------------------------------------
 // Geometry free functions
 // ---------------------------------------------------------------------------
+
+/// Compute absolute area and area-weighted centroid of a simple polygon.
+fn polygon_area_centroid(polygon: &[DVec2]) -> (f64, DVec2) {
+    let n = polygon.len();
+    if n < 3 {
+        return (0.0, DVec2::ZERO);
+    }
+    let mut signed_area = 0.0;
+    let mut cx = 0.0;
+    let mut cy = 0.0;
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let cross = polygon[i].x * polygon[j].y - polygon[j].x * polygon[i].y;
+        signed_area += cross;
+        cx += (polygon[i].x + polygon[j].x) * cross;
+        cy += (polygon[i].y + polygon[j].y) * cross;
+    }
+    signed_area *= 0.5;
+    if signed_area.abs() < 1e-10 {
+        return (0.0, DVec2::ZERO);
+    }
+    cx /= 6.0 * signed_area;
+    cy /= 6.0 * signed_area;
+    (signed_area.abs(), DVec2::new(cx, cy))
+}
 
 /// Shoelace formula — absolute area of a simple polygon in mm².
 pub fn shoelace_area(polygon: &[DVec2]) -> f64 {

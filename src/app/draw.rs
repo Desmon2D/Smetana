@@ -632,24 +632,20 @@ impl DrawCtx<'_> {
             self.painter.add(text_shape);
         }
 
-        // Room name + area at centroid
+        // Room name + area at centroid (or custom offset)
         for room in &self.project.rooms {
-            let screen_pts =
-                polygon_screen_coords(&room.points, self.project, self.canvas, self.center);
-            if screen_pts.is_empty() {
+            if room.points.is_empty() {
                 continue;
             }
 
-            let cx: f32 =
-                screen_pts.iter().map(|p| p.x).sum::<f32>() / screen_pts.len() as f32;
-            let cy: f32 =
-                screen_pts.iter().map(|p| p.y).sum::<f32>() / screen_pts.len() as f32;
+            let name_pos = room.name_position(self.project);
+            let screen_pos = self.canvas.dvec2_to_screen(name_pos, self.center);
 
             let [r, g, b, _] = room.color;
             let room_label_color = egui::Color32::from_rgb(r, g, b);
 
             self.painter.text(
-                egui::pos2(cx, cy),
+                screen_pos,
                 egui::Align2::CENTER_CENTER,
                 &room.name,
                 egui::FontId::proportional(13.0 * self.label_scale),
@@ -658,7 +654,7 @@ impl DrawCtx<'_> {
 
             let area_m2 = room.floor_area(self.project) / 1_000_000.0;
             self.painter.text(
-                egui::pos2(cx, cy + 16.0 * self.label_scale),
+                egui::pos2(screen_pos.x, screen_pos.y + 16.0 * self.label_scale),
                 egui::Align2::CENTER_CENTER,
                 format!("{:.4} м²", area_m2),
                 egui::FontId::proportional(11.0 * self.label_scale),

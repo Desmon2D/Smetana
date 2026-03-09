@@ -742,6 +742,18 @@ impl App {
         labeled_value(ui, "Точек:", format!("{}", point_count));
         labeled_value(ui, "Вырезов:", format!("{}", cutout_count));
 
+        ui.add_space(4.0);
+
+        {
+            let has_offset = self.project.room(id).is_some_and(|r| r.name_offset.is_some());
+            if has_offset && ui.button("Сбросить положение подписи").clicked() {
+                self.ensure_edit_snapshot();
+                if let Some(room) = self.project.room_mut(id) {
+                    room.name_offset = None;
+                }
+            }
+        }
+
         ui.add_space(8.0);
 
         if ui.button("Удалить комнату").clicked() {

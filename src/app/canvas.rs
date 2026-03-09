@@ -39,6 +39,16 @@ fn hit_test(world_pos: DVec2, project: &Project, zoom: f32) -> Selection {
         }
     }
 
+    // 2.5. Room names
+    for room in &project.rooms {
+        if !room.points.is_empty() {
+            let name_pos = room.name_position(project);
+            if name_pos.distance(world_pos) < label_threshold {
+                return Selection::Room(room.id);
+            }
+        }
+    }
+
     // 3. Edges
     for edge in &project.edges {
         let (Some(a), Some(b)) = (project.point(edge.point_a), project.point(edge.point_b)) else {
@@ -262,12 +272,27 @@ impl App {
         if response.drag_started() && !space_held {
             // Hit-test at drag origin so we drag the point under the cursor,
             // not the previously selected one.
+            self.dragging_room_name = None;
             if let Some(hover) = response.hover_pos() {
                 let world_pos = self.canvas.screen_to_world_dvec2(hover, rect.center());
-                let hit = hit_test(world_pos, &self.project, self.canvas.zoom);
-                if matches!(hit, Selection::Point(_) | Selection::Label(_)) {
-                    self.selection = hit;
+
+                // Check room names first (higher priority for dragging)
+                let name_threshold = 20.0 / self.canvas.zoom as f64;
+                let room_name_hit = self.project.rooms.iter().find(|r| {
+                    !r.points.is_empty()
+                        && r.name_position(&self.project).distance(world_pos) < name_threshold
+                }).map(|r| r.id);
+
+                if let Some(room_id) = room_name_hit {
+                    self.dragging_room_name = Some(room_id);
+                    self.selection = Selection::Room(room_id);
                     self.history.snapshot(&self.project);
+                } else {
+                    let hit = hit_test(world_pos, &self.project, self.canvas.zoom);
+                    if matches!(hit, Selection::Point(_) | Selection::Label(_)) {
+                        self.selection = hit;
+                        self.history.snapshot(&self.project);
+                    }
                 }
             }
         }
@@ -282,23 +307,34 @@ impl App {
         };
         let cursor_pt = self.canvas.screen_to_world_dvec2(hover, rect.center());
 
-        match self.selection {
-            Selection::Point(pid) => {
-                let snapped = if shift_held {
-                    cursor_pt
-                } else {
-                    snap_to_grid(cursor_pt, self.canvas.visible_grid_step())
-                };
-                if let Some(point) = self.project.point_mut(pid) {
-                    point.position = snapped;
-                }
+        if let Some(room_id) = self.dragging_room_name {
+            let centroid = self.project.rooms.iter()
+                .find(|r| r.id == room_id)
+                .map(|r| r.centroid(&self.project))
+                .unwrap_or(DVec2::ZERO);
+            let offset = cursor_pt - centroid;
+            if let Some(room) = self.project.room_mut(room_id) {
+                room.name_offset = Some(offset);
             }
-            Selection::Label(lid) => {
-                if let Some(label) = self.project.label_mut(lid) {
-                    label.position = cursor_pt;
+        } else {
+            match self.selection {
+                Selection::Point(pid) => {
+                    let snapped = if shift_held {
+                        cursor_pt
+                    } else {
+                        snap_to_grid(cursor_pt, self.canvas.visible_grid_step())
+                    };
+                    if let Some(point) = self.project.point_mut(pid) {
+                        point.position = snapped;
+                    }
                 }
+                Selection::Label(lid) => {
+                    if let Some(label) = self.project.label_mut(lid) {
+                        label.position = cursor_pt;
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 

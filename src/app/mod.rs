@@ -178,6 +178,7 @@ pub struct App {
     last_save_time: Instant,
     label_scale: f32,
     copied_color: Option<[u8; 4]>,
+    dragging_room_name: Option<uuid::Uuid>,
 }
 
 impl App {
@@ -208,6 +209,7 @@ impl App {
             last_save_time: Instant::now(),
             label_scale: 1.0,
             copied_color: None,
+            dragging_room_name: None,
         }
     }
 
