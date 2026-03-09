@@ -204,11 +204,11 @@ impl App {
         } else if ctrl_z {
             self.edit_snapshot_version = None;
             self.history.undo(&mut self.project);
-            self.validate_selection();
+            self.selection = Selection::None;
         } else if ctrl_y || ctrl_shift_z {
             self.edit_snapshot_version = None;
             self.history.redo(&mut self.project);
-            self.validate_selection();
+            self.selection = Selection::None;
         }
 
         if !ctx.wants_keyboard_input() {
@@ -263,7 +263,7 @@ impl App {
                 {
                     self.edit_snapshot_version = None;
                     self.history.undo(&mut self.project);
-                    self.validate_selection();
+                    self.selection = Selection::None;
                 }
                 if ui
                     .add_enabled(self.history.can_redo(), egui::Button::new("Повторить"))
@@ -271,7 +271,7 @@ impl App {
                 {
                     self.edit_snapshot_version = None;
                     self.history.redo(&mut self.project);
-                    self.validate_selection();
+                    self.selection = Selection::None;
                 }
 
                 ui.separator();

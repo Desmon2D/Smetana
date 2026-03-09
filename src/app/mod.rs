@@ -319,21 +319,6 @@ impl App {
         }
     }
 
-    /// Clear selection if the referenced entity no longer exists in the project.
-    fn validate_selection(&mut self) {
-        let valid = match self.selection {
-            Selection::None => true,
-            Selection::Point(id) => self.project.point(id).is_some(),
-            Selection::Edge(id) => self.project.edge(id).is_some(),
-            Selection::Room(id) => self.project.room(id).is_some(),
-            Selection::Wall(id) => self.project.wall(id).is_some(),
-            Selection::Opening(id) => self.project.opening(id).is_some(),
-            Selection::Label(id) => self.project.label(id).is_some(),
-        };
-        if !valid {
-            self.selection = Selection::None;
-        }
-    }
 }
 
 impl eframe::App for App {
