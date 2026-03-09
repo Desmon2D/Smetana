@@ -1,2 +1,10 @@
 /target
 /saves
+*.exe
+*.pdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
