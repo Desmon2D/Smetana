@@ -622,21 +622,21 @@ impl App {
         ui.add_space(4.0);
         ui.label("Подпись:");
         ui.horizontal(|ui| {
-            if ui.button("Сторона").clicked() {
-                if let Some(edge) = self.project.edge_mut(id) {
-                    edge.label_flip_side = !edge.label_flip_side;
-                }
+            if ui.button("Сторона").clicked()
+                && let Some(edge) = self.project.edge_mut(id)
+            {
+                edge.label_flip_side = !edge.label_flip_side;
             }
-            if ui.button("Перевернуть").clicked() {
-                if let Some(edge) = self.project.edge_mut(id) {
-                    edge.label_flip_text = !edge.label_flip_text;
-                }
+            if ui.button("Перевернуть").clicked()
+                && let Some(edge) = self.project.edge_mut(id)
+            {
+                edge.label_flip_text = !edge.label_flip_text;
             }
-            let hidden = self.project.edge(id).map_or(false, |e| e.label_hidden);
-            if ui.button(if hidden { "Показать" } else { "Скрыть" }).clicked() {
-                if let Some(edge) = self.project.edge_mut(id) {
-                    edge.label_hidden = !edge.label_hidden;
-                }
+            let hidden = self.project.edge(id).is_some_and(|e| e.label_hidden);
+            if ui.button(if hidden { "Показать" } else { "Скрыть" }).clicked()
+                && let Some(edge) = self.project.edge_mut(id)
+            {
+                edge.label_hidden = !edge.label_hidden;
             }
         });
 

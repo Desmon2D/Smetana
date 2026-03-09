@@ -70,7 +70,7 @@ pub fn list_project_entries() -> Result<Vec<ProjectEntry>, String> {
         })
         .collect();
     // Sort by last modified, newest first
-    entries.sort_by(|a, b| b.modified.cmp(&a.modified));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.modified));
     Ok(entries)
 }
 
