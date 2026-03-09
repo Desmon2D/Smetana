@@ -2,7 +2,7 @@ use eframe::egui;
 use glam::DVec2;
 use uuid::Uuid;
 
-use crate::model::Point;
+use crate::model::{Edge, Point, distance_to_segment, project_onto_segment};
 
 // ---------------------------------------------------------------------------
 // Canvas (viewport)
@@ -81,6 +81,22 @@ impl Canvas {
         self.zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
         self.offset.x = (screen_pos.x - rect_center.x) / self.zoom - world_before.x;
         self.offset.y = (screen_pos.y - rect_center.y) / self.zoom - world_before.y;
+    }
+
+    /// Return the finest grid step that is currently visible on screen.
+    pub fn visible_grid_step(&self) -> f64 {
+        let min_px = 20.0;
+        let minor_step = self.grid_step as f32;
+        let sub_step = minor_step / 10.0;
+        let major_step = minor_step * 10.0;
+
+        if sub_step * self.zoom >= min_px {
+            sub_step as f64
+        } else if minor_step * self.zoom >= min_px {
+            minor_step as f64
+        } else {
+            major_step as f64
+        }
     }
 
     /// Render the background grid on the canvas.
@@ -214,6 +230,8 @@ const POINT_SNAP_RADIUS: f64 = 15.0;
 pub struct SnapResult {
     pub position: DVec2,
     pub snapped_point: Option<Uuid>,
+    /// If snapped to an edge: (edge_id, point_a, point_b).
+    pub snapped_edge: Option<(Uuid, Uuid, Uuid)>,
 }
 
 /// Find the nearest existing point within the screen-space snap radius.
@@ -229,19 +247,48 @@ pub fn snap_to_point(world_pos: DVec2, points: &[Point], zoom: f32) -> Option<Uu
     best.map(|(id, _)| id)
 }
 
+const EDGE_SNAP_RADIUS: f64 = 5.0;
+
+/// Find the nearest edge within the screen-space snap radius.
+/// Returns `(edge_id, point_a, point_b, projected_position)`.
+pub fn snap_to_edge(
+    world_pos: DVec2,
+    edges: &[Edge],
+    points: &[Point],
+    zoom: f32,
+) -> Option<(Uuid, Uuid, Uuid, DVec2)> {
+    let threshold = EDGE_SNAP_RADIUS / zoom as f64;
+    let mut best: Option<(Uuid, Uuid, Uuid, DVec2, f64)> = None;
+
+    for edge in edges {
+        let a = points.iter().find(|p| p.id == edge.point_a);
+        let b = points.iter().find(|p| p.id == edge.point_b);
+        let (Some(a), Some(b)) = (a, b) else { continue };
+
+        let dist = distance_to_segment(world_pos, a.position, b.position);
+        if dist < threshold && (best.is_none() || dist < best.as_ref().unwrap().4) {
+            let (_, proj) = project_onto_segment(world_pos, a.position, b.position);
+            best = Some((edge.id, edge.point_a, edge.point_b, proj, dist));
+        }
+    }
+
+    best.map(|(eid, a, b, pos, _)| (eid, a, b, pos))
+}
+
 /// Snap a world position to the nearest grid intersection.
-fn snap_to_grid(world_pos: DVec2, grid_step: f64) -> DVec2 {
+pub fn snap_to_grid(world_pos: DVec2, grid_step: f64) -> DVec2 {
     DVec2::new(
         (world_pos.x / grid_step).round() * grid_step,
         (world_pos.y / grid_step).round() * grid_step,
     )
 }
 
-/// Combined snap: try point snap first, then grid snap.
+/// Combined snap: try point snap first, then edge snap, then grid snap.
 /// If `snap_enabled` is false, returns the raw world position.
 pub fn snap(
     world_pos: DVec2,
     points: &[Point],
+    edges: &[Edge],
     grid_step: f64,
     zoom: f32,
     snap_enabled: bool,
@@ -250,20 +297,34 @@ pub fn snap(
         return SnapResult {
             position: world_pos,
             snapped_point: None,
+            snapped_edge: None,
         };
     }
 
+    // 1. Point snap (highest priority)
     if let Some(id) = snap_to_point(world_pos, points, zoom) {
         let pos = points.iter().find(|p| p.id == id).unwrap().position;
         return SnapResult {
             position: pos,
             snapped_point: Some(id),
+            snapped_edge: None,
         };
     }
 
+    // 2. Edge snap
+    if let Some((edge_id, pa, pb, proj)) = snap_to_edge(world_pos, edges, points, zoom) {
+        return SnapResult {
+            position: proj,
+            snapped_point: None,
+            snapped_edge: Some((edge_id, pa, pb)),
+        };
+    }
+
+    // 3. Grid snap
     let grid_pos = snap_to_grid(world_pos, grid_step);
     SnapResult {
         position: grid_pos,
         snapped_point: None,
+        snapped_edge: None,
     }
 }

@@ -133,6 +133,41 @@ pub(super) fn show_defaults_form(ui: &mut egui::Ui, defaults: &mut ProjectDefaul
             );
             ui.end_row();
         });
+    ui.add_space(4.0);
+    ui.label("Цвета по умолчанию:");
+    egui::Grid::new("defaults_colors")
+        .num_columns(2)
+        .show(ui, |ui| {
+            let mut wall_c = egui::Color32::from_rgba_premultiplied(
+                defaults.wall_color[0], defaults.wall_color[1],
+                defaults.wall_color[2], defaults.wall_color[3],
+            );
+            ui.label("Стены:");
+            if ui.color_edit_button_srgba(&mut wall_c).changed() {
+                defaults.wall_color = [wall_c.r(), wall_c.g(), wall_c.b(), wall_c.a()];
+            }
+            ui.end_row();
+
+            let mut door_c = egui::Color32::from_rgba_premultiplied(
+                defaults.door_color[0], defaults.door_color[1],
+                defaults.door_color[2], defaults.door_color[3],
+            );
+            ui.label("Двери:");
+            if ui.color_edit_button_srgba(&mut door_c).changed() {
+                defaults.door_color = [door_c.r(), door_c.g(), door_c.b(), door_c.a()];
+            }
+            ui.end_row();
+
+            let mut window_c = egui::Color32::from_rgba_premultiplied(
+                defaults.window_color[0], defaults.window_color[1],
+                defaults.window_color[2], defaults.window_color[3],
+            );
+            ui.label("Окна:");
+            if ui.color_edit_button_srgba(&mut window_c).changed() {
+                defaults.window_color = [window_c.r(), window_c.g(), window_c.b(), window_c.a()];
+            }
+            ui.end_row();
+        });
 }
 
 // ---------------------------------------------------------------------------
@@ -162,30 +197,38 @@ impl App {
         } else if ctrl_z {
             self.edit_snapshot_version = None;
             self.history.undo(&mut self.project);
+            self.validate_selection();
         } else if ctrl_y || ctrl_shift_z {
             self.edit_snapshot_version = None;
             self.history.redo(&mut self.project);
+            self.validate_selection();
         }
 
-        ctx.input(|i| {
-            if !i.modifiers.ctrl && !i.modifiers.alt {
-                if i.key_pressed(egui::Key::V) {
-                    self.set_tool(Tool::Select);
-                } else if i.key_pressed(egui::Key::P) {
-                    self.set_tool(Tool::Point);
-                } else if i.key_pressed(egui::Key::R) {
-                    self.set_tool(Tool::Room);
-                } else if i.key_pressed(egui::Key::W) {
-                    self.set_tool(Tool::Wall);
-                } else if i.key_pressed(egui::Key::D) {
-                    self.set_tool(Tool::Door);
-                } else if i.key_pressed(egui::Key::O) {
-                    self.set_tool(Tool::Window);
-                } else if i.key_pressed(egui::Key::T) {
-                    self.set_tool(Tool::Label);
+        if !ctx.wants_keyboard_input() {
+            ctx.input(|i| {
+                if !i.modifiers.ctrl && !i.modifiers.alt {
+                    if i.key_pressed(egui::Key::Num1) {
+                        self.set_tool(Tool::Select);
+                    } else if i.key_pressed(egui::Key::Num2) {
+                        self.set_tool(Tool::Point);
+                    } else if i.key_pressed(egui::Key::Num3) {
+                        self.set_tool(Tool::Edge);
+                    } else if i.key_pressed(egui::Key::Num4) {
+                        self.set_tool(Tool::Cutout);
+                    } else if i.key_pressed(egui::Key::Num5) {
+                        self.set_tool(Tool::Room);
+                    } else if i.key_pressed(egui::Key::Num6) {
+                        self.set_tool(Tool::Door);
+                    } else if i.key_pressed(egui::Key::Num7) {
+                        self.set_tool(Tool::Window);
+                    } else if i.key_pressed(egui::Key::Num8) {
+                        self.set_tool(Tool::Wall);
+                    } else if i.key_pressed(egui::Key::Num9) {
+                        self.set_tool(Tool::Label);
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 
     pub(super) fn show_toolbar(&mut self, ctx: &egui::Context) {
@@ -194,13 +237,15 @@ impl App {
                 ui.label("Инструмент:");
 
                 let mut tool = self.active_tool;
-                ui.selectable_value(&mut tool, Tool::Select, "Выбор (V)");
-                ui.selectable_value(&mut tool, Tool::Point, "Точка (P)");
-                ui.selectable_value(&mut tool, Tool::Room, "Комната (R)");
-                ui.selectable_value(&mut tool, Tool::Wall, "Стена (W)");
-                ui.selectable_value(&mut tool, Tool::Door, "Дверь (D)");
-                ui.selectable_value(&mut tool, Tool::Window, "Окно (O)");
-                ui.selectable_value(&mut tool, Tool::Label, "Подпись (T)");
+                ui.selectable_value(&mut tool, Tool::Select, "Выбор (1)");
+                ui.selectable_value(&mut tool, Tool::Point, "Точка (2)");
+                ui.selectable_value(&mut tool, Tool::Edge, "Ребро (3)");
+                ui.selectable_value(&mut tool, Tool::Cutout, "Вырез (4)");
+                ui.selectable_value(&mut tool, Tool::Room, "Комната (5)");
+                ui.selectable_value(&mut tool, Tool::Door, "Дверь (6)");
+                ui.selectable_value(&mut tool, Tool::Window, "Окно (7)");
+                ui.selectable_value(&mut tool, Tool::Wall, "Стена (8)");
+                ui.selectable_value(&mut tool, Tool::Label, "Подпись (9)");
                 self.set_tool(tool);
 
                 ui.separator();
@@ -211,6 +256,7 @@ impl App {
                 {
                     self.edit_snapshot_version = None;
                     self.history.undo(&mut self.project);
+                    self.validate_selection();
                 }
                 if ui
                     .add_enabled(self.history.can_redo(), egui::Button::new("Повторить"))
@@ -218,6 +264,7 @@ impl App {
                 {
                     self.edit_snapshot_version = None;
                     self.history.redo(&mut self.project);
+                    self.validate_selection();
                 }
 
                 ui.separator();
@@ -504,7 +551,9 @@ impl App {
             let height_a = self.project.point(point_a).map(|p| p.height).unwrap_or(0.0);
             let height_b = self.project.point(point_b).map(|p| p.height).unwrap_or(0.0);
             let avg_height = (height_a + height_b) / 2.0;
-            let wall_area_m2 = effective_dist * avg_height / 1_000_000.0;
+            let wall_area_gross = effective_dist * avg_height / 1_000_000.0;
+            let openings_area = self.project.openings_area_on_edge(point_a, point_b) / 1_000_000.0;
+            let wall_area_net = (wall_area_gross - openings_area).max(0.0);
 
             (
                 computed_dist,
@@ -512,11 +561,12 @@ impl App {
                 angle_override,
                 height_a,
                 height_b,
-                wall_area_m2,
+                wall_area_gross,
+                wall_area_net,
             )
         });
 
-        let Some((computed_dist, dist_override, angle_override, height_a, height_b, wall_area_m2)) =
+        let Some((computed_dist, dist_override, angle_override, height_a, height_b, wall_area_gross, wall_area_net)) =
             edge_info
         else {
             ui.label("Ребро не найдено");
@@ -570,10 +620,32 @@ impl App {
         }
 
         ui.add_space(4.0);
+        ui.label("Подпись:");
+        ui.horizontal(|ui| {
+            if ui.button("Сторона").clicked() {
+                if let Some(edge) = self.project.edge_mut(id) {
+                    edge.label_flip_side = !edge.label_flip_side;
+                }
+            }
+            if ui.button("Перевернуть").clicked() {
+                if let Some(edge) = self.project.edge_mut(id) {
+                    edge.label_flip_text = !edge.label_flip_text;
+                }
+            }
+            let hidden = self.project.edge(id).map_or(false, |e| e.label_hidden);
+            if ui.button(if hidden { "Показать" } else { "Скрыть" }).clicked() {
+                if let Some(edge) = self.project.edge_mut(id) {
+                    edge.label_hidden = !edge.label_hidden;
+                }
+            }
+        });
+
+        ui.add_space(4.0);
         ui.separator();
         labeled_value(ui, "Высота в A:", format!("{:.0} мм", height_a));
         labeled_value(ui, "Высота в B:", format!("{:.0} мм", height_b));
-        labeled_value(ui, "Площадь стены:", format!("{:.3} м²", wall_area_m2));
+        labeled_value(ui, "Площадь брутто:", format!("{:.3} м²", wall_area_gross));
+        labeled_value(ui, "Площадь нетто:", format!("{:.3} м²", wall_area_net));
     }
 
     fn show_room_properties(&mut self, ui: &mut egui::Ui, id: uuid::Uuid) {
@@ -609,12 +681,6 @@ impl App {
 
         ui.add_space(8.0);
 
-        if ui.button("Добавить вырез").clicked() {
-            self.tool_state.building_cutout = true;
-            self.tool_state.points.clear();
-            self.active_tool = Tool::Room;
-        }
-
         if ui.button("Удалить комнату").clicked() {
             self.history.snapshot(&self.project);
             self.project.remove_room(id);
@@ -629,11 +695,12 @@ impl App {
             return;
         };
         let point_count = wall.points.len();
+        let current_color = wall.color;
         let mut color = egui::Color32::from_rgba_premultiplied(
-            wall.color[0],
-            wall.color[1],
-            wall.color[2],
-            wall.color[3],
+            current_color[0],
+            current_color[1],
+            current_color[2],
+            current_color[3],
         );
 
         ui.label("Стена");
@@ -650,17 +717,29 @@ impl App {
             }
         });
 
+        ui.horizontal(|ui| {
+            if ui.small_button("Копировать цвет").clicked() {
+                self.copied_color = Some(current_color);
+            }
+            if let Some(cc) = self.copied_color
+                && ui.small_button("Вставить цвет").clicked()
+                && let Some(wall) = self.project.wall_mut(id)
+            {
+                wall.color = cc;
+            }
+        });
+
         labeled_value(ui, "Точек:", format!("{}", point_count));
     }
 
     fn show_opening_properties(&mut self, ui: &mut egui::Ui, id: uuid::Uuid) {
-        let (kind_label, point_count) = match self.project.opening(id) {
+        let (kind_label, point_count, current_color) = match self.project.opening(id) {
             Some(o) => {
                 let label = match &o.kind {
                     OpeningKind::Door { .. } => "Дверь",
                     OpeningKind::Window { .. } => "Окно",
                 };
-                (label, o.points.len())
+                (label, o.points.len(), o.color)
             }
             None => {
                 ui.label("Проём не найден");
@@ -674,11 +753,52 @@ impl App {
 
         self.ensure_edit_snapshot();
 
+        let mut color = egui::Color32::from_rgba_premultiplied(
+            current_color[0],
+            current_color[1],
+            current_color[2],
+            current_color[3],
+        );
+        ui.horizontal(|ui| {
+            ui.label("Цвет:");
+            if ui.color_edit_button_srgba(&mut color).changed()
+                && let Some(opening) = self.project.opening_mut(id)
+            {
+                opening.color = [color.r(), color.g(), color.b(), color.a()];
+            }
+        });
+
+        ui.horizontal(|ui| {
+            if ui.small_button("Копировать цвет").clicked() {
+                self.copied_color = Some(current_color);
+            }
+            if let Some(cc) = self.copied_color
+                && ui.small_button("Вставить цвет").clicked()
+                && let Some(opening) = self.project.opening_mut(id)
+            {
+                opening.color = cc;
+            }
+        });
+
         if let Some(opening) = self.project.opening_mut(id) {
             match &mut opening.kind {
-                OpeningKind::Door { height, width } => {
+                OpeningKind::Door {
+                    height,
+                    width,
+                    swing_edge,
+                    swing_outward,
+                } => {
                     labeled_drag(ui, "Высота (мм):", height, 500.0..=3500.0, 10.0);
                     labeled_drag(ui, "Ширина (мм):", width, 300.0..=3000.0, 10.0);
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Направление").clicked() {
+                            *swing_outward = !*swing_outward;
+                        }
+                        if ui.button("Грань").clicked() {
+                            *swing_edge = (*swing_edge + 1) % point_count.max(1);
+                        }
+                    });
                 }
                 OpeningKind::Window {
                     height,

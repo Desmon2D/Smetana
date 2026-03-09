@@ -117,7 +117,7 @@ mod tests {
         project.rooms.push(room);
 
         // Add a wall
-        let wall = Wall::new(ids.clone());
+        let wall = Wall::new(ids.clone(), [180, 180, 180, 255]);
         let wall_id = wall.id;
         project.walls.push(wall);
 
@@ -127,7 +127,10 @@ mod tests {
             OpeningKind::Door {
                 height: 2100.0,
                 width: 900.0,
+                swing_edge: 0,
+                swing_outward: true,
             },
+            [210, 170, 120, 200],
         );
         let opening_id = opening.id;
         project.openings.push(opening);
@@ -166,7 +169,7 @@ mod tests {
 
         let loaded_opening = loaded.opening(opening_id).expect("opening not found");
         assert!(
-            matches!(loaded_opening.kind, OpeningKind::Door { height, width } if height == 2100.0 && width == 900.0)
+            matches!(loaded_opening.kind, OpeningKind::Door { height, width, .. } if height == 2100.0 && width == 900.0)
         );
 
         let loaded_label = loaded

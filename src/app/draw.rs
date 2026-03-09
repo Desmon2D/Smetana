@@ -1,5 +1,6 @@
 use eframe::egui;
 
+use super::canvas::PointPreviewKind;
 use super::viewport::{Canvas, VisibilityMode};
 use super::{Selection, Tool};
 use crate::model::{OpeningKind, Project};
@@ -139,6 +140,7 @@ fn draw_door_symbol(
     painter: &egui::Painter,
     p_left: egui::Pos2,
     p_right: egui::Pos2,
+    arc_sign: f32,
     is_selected: bool,
 ) {
     let color = if is_selected {
@@ -154,8 +156,8 @@ fn draw_door_symbol(
     if arc_r > 1.0 {
         let ux = (p_right.x - p_left.x) / arc_r;
         let uy = (p_right.y - p_left.y) / arc_r;
-        let px = -uy;
-        let py = ux;
+        let px = -uy * arc_sign;
+        let py = ux * arc_sign;
 
         let n_seg = 16;
         let mut pts = Vec::with_capacity(n_seg + 1);
@@ -175,8 +177,8 @@ fn draw_window_symbol(
     painter: &egui::Painter,
     p_left: egui::Pos2,
     p_right: egui::Pos2,
-    nx: f32,
-    ny: f32,
+    inx: f32,
+    iny: f32,
     is_selected: bool,
 ) {
     let color = if is_selected {
@@ -186,9 +188,11 @@ fn draw_window_symbol(
     };
     let stroke_w = if is_selected { 2.0 } else { 1.5 };
 
-    for sign in [-0.3_f32, 0.3_f32] {
-        let ox = nx * sign;
-        let oy = ny * sign;
+    // inx, iny point toward polygon interior with full thickness magnitude.
+    // Draw two parallel lines centered within the polygon (at 35% and 65%).
+    for t in [0.35_f32, 0.65_f32] {
+        let ox = inx * t;
+        let oy = iny * t;
         painter.line_segment(
             [
                 egui::pos2(p_left.x + ox, p_left.y + oy),
@@ -198,11 +202,12 @@ fn draw_window_symbol(
         );
     }
 
+    // End caps connecting the two parallel lines
     for p in [p_left, p_right] {
         painter.line_segment(
             [
-                egui::pos2(p.x + nx * 0.3, p.y + ny * 0.3),
-                egui::pos2(p.x - nx * 0.3, p.y - ny * 0.3),
+                egui::pos2(p.x + inx * 0.35, p.y + iny * 0.35),
+                egui::pos2(p.x + inx * 0.65, p.y + iny * 0.65),
             ],
             egui::Stroke::new(stroke_w, color),
         );
@@ -301,37 +306,63 @@ impl DrawCtx<'_> {
             let is_selected = self.selection == Selection::Opening(opening.id);
 
             if screen_pts.len() >= 3 {
-                fill_polygon(
-                    self.painter,
-                    &screen_pts,
-                    egui::Color32::from_rgb(45, 45, 48),
-                );
+                let [r, g, b, a] = opening.color;
+                let fill = if is_selected {
+                    egui::Color32::from_rgba_unmultiplied(
+                        r.saturating_add(40),
+                        g.saturating_add(40),
+                        b.saturating_add(40),
+                        a,
+                    )
+                } else {
+                    egui::Color32::from_rgba_unmultiplied(r, g, b, a)
+                };
+                fill_polygon(self.painter, &screen_pts, fill);
             }
 
-            let p_left = screen_pts[0];
-            let p_right = screen_pts[1];
-
-            let dx = p_right.x - p_left.x;
-            let dy = p_right.y - p_left.y;
-            let len = (dx * dx + dy * dy).sqrt().max(0.001);
-            let half_thick = if screen_pts.len() >= 3 {
-                let nx = -dy / len;
-                let ny = dx / len;
-                let d =
-                    (screen_pts[2].x - p_left.x) * nx + (screen_pts[2].y - p_left.y) * ny;
-                d.abs()
-            } else {
-                6.0
-            };
-            let nx = -dy / len * half_thick;
-            let ny = dx / len * half_thick;
-
             match &opening.kind {
-                OpeningKind::Door { .. } => {
-                    draw_door_symbol(self.painter, p_left, p_right, is_selected);
+                OpeningKind::Door { swing_edge, swing_outward, .. } => {
+                    let n = screen_pts.len();
+                    let idx = *swing_edge % n;
+                    let p_a = screen_pts[idx];
+                    let p_b = screen_pts[(idx + 1) % n];
+
+                    // Compute interior direction for this edge
+                    let dx = p_b.x - p_a.x;
+                    let dy = p_b.y - p_a.y;
+                    let len = (dx * dx + dy * dy).sqrt().max(0.001);
+                    let nx = -dy / len;
+                    let ny = dx / len;
+
+                    // Centroid determines which side is interior
+                    let cx = screen_pts.iter().map(|p| p.x).sum::<f32>() / n as f32;
+                    let cy = screen_pts.iter().map(|p| p.y).sum::<f32>() / n as f32;
+                    let mid_x = (p_a.x + p_b.x) / 2.0;
+                    let mid_y = (p_a.y + p_b.y) / 2.0;
+                    let to_center = (cx - mid_x) * nx + (cy - mid_y) * ny;
+                    let interior_sign = if to_center >= 0.0 { 1.0_f32 } else { -1.0 };
+                    let arc_sign = if *swing_outward { -interior_sign } else { interior_sign };
+
+                    draw_door_symbol(self.painter, p_a, p_b, arc_sign, is_selected);
                 }
                 OpeningKind::Window { .. } => {
-                    draw_window_symbol(self.painter, p_left, p_right, nx, ny, is_selected);
+                    let p_left = screen_pts[0];
+                    let p_right = screen_pts[1];
+                    let dx = p_right.x - p_left.x;
+                    let dy = p_right.y - p_left.y;
+                    let len = (dx * dx + dy * dy).sqrt().max(0.001);
+                    let unit_nx = -dy / len;
+                    let unit_ny = dx / len;
+                    let (thickness, sign) = if screen_pts.len() >= 3 {
+                        let d = (screen_pts[2].x - p_left.x) * unit_nx
+                            + (screen_pts[2].y - p_left.y) * unit_ny;
+                        (d.abs(), if d >= 0.0 { 1.0_f32 } else { -1.0 })
+                    } else {
+                        (6.0, 1.0)
+                    };
+                    let inx = unit_nx * sign * thickness;
+                    let iny = unit_ny * sign * thickness;
+                    draw_window_symbol(self.painter, p_left, p_right, inx, iny, is_selected);
                 }
             }
 
@@ -399,6 +430,10 @@ impl DrawCtx<'_> {
         let label_color = egui::Color32::from_rgb(190, 190, 200);
 
         for edge in &self.project.edges {
+            if edge.label_hidden {
+                continue;
+            }
+
             let a = match self.project.point(edge.point_a) {
                 Some(p) => p,
                 None => continue,
@@ -418,17 +453,37 @@ impl DrawCtx<'_> {
                 continue;
             }
 
-            let angle = dy.atan2(dx);
-            let dist_mm = edge.distance(&self.project.points);
+            let mut angle = dy.atan2(dx);
+            // Normalize to prevent upside-down text
+            if angle > std::f32::consts::FRAC_PI_2 {
+                angle -= std::f32::consts::PI;
+            } else if angle < -std::f32::consts::FRAC_PI_2 {
+                angle += std::f32::consts::PI;
+            }
+            // Flip 180° if requested (after normalization, so it actually flips)
+            if edge.label_flip_text {
+                angle += std::f32::consts::PI;
+            }
 
-            let label = if dist_mm >= 1000.0 {
+            let dist_mm = edge.distance(&self.project.points);
+            let height_a = a.height;
+            let height_b = b.height;
+            let avg_height = (height_a + height_b) / 2.0;
+            let wall_area_gross = dist_mm * avg_height;
+            let openings_area =
+                self.project.openings_area_on_edge(edge.point_a, edge.point_b);
+            let wall_area_net_m2 = (wall_area_gross - openings_area).max(0.0) / 1_000_000.0;
+
+            let dist_str = if dist_mm >= 1000.0 {
                 format!("{:.2} м", dist_mm / 1000.0)
             } else {
                 format!("{:.0} мм", dist_mm)
             };
+            let label = format!("{} - {:.3} м²", dist_str, wall_area_net_m2);
 
-            let perp_x = -dy / screen_len * 10.0;
-            let perp_y = dx / screen_len * 10.0;
+            let side = if edge.label_flip_side { -1.0_f32 } else { 1.0 };
+            let perp_x = -dy / screen_len * 10.0 * side;
+            let perp_y = dx / screen_len * 10.0 * side;
             let mid =
                 egui::pos2((sa.x + sb.x) / 2.0 + perp_x, (sa.y + sb.y) / 2.0 + perp_y);
 
@@ -438,14 +493,17 @@ impl DrawCtx<'_> {
                 label_color
             };
 
-            paint_rotated_text(
-                self.painter,
-                mid,
-                label,
-                egui::FontId::proportional(10.0 * self.label_scale),
-                color,
-                angle,
-            );
+            // Render directly with final angle (bypass paint_rotated_text normalization)
+            let font_id = egui::FontId::proportional(10.0 * self.label_scale);
+            let galley = self.painter.layout_no_wrap(label, font_id, color);
+            let size = galley.size();
+            let (sin_a, cos_a) = angle.sin_cos();
+            let offset_x = cos_a * (size.x / 2.0) - sin_a * (size.y / 2.0);
+            let offset_y = sin_a * (size.x / 2.0) + cos_a * (size.y / 2.0);
+            let pos = egui::pos2(mid.x - offset_x, mid.y - offset_y);
+            let text_shape =
+                egui::epaint::TextShape::new(pos, galley, color).with_angle(angle);
+            self.painter.add(text_shape);
         }
 
         // Room name + area at centroid
@@ -525,13 +583,81 @@ impl DrawCtx<'_> {
         }
     }
 
-    pub fn draw_tool_preview(&self, active_tool: Tool, tool_points: &[uuid::Uuid]) {
+    pub fn draw_tool_preview(
+        &self,
+        active_tool: Tool,
+        tool_points: &[uuid::Uuid],
+        point_preview: Option<(glam::DVec2, PointPreviewKind)>,
+    ) {
+        // Edge tool preview
+        if active_tool == Tool::Edge {
+            if tool_points.len() == 1
+                && let Some(cursor_world) = self.canvas.cursor_world_pos
+                && let Some(first) = self.project.point(tool_points[0])
+            {
+                let first_screen = self.canvas.dvec2_to_screen(first.position, self.center);
+                let cursor_screen = self.canvas.dvec2_to_screen(cursor_world, self.center);
+                let color = egui::Color32::from_rgba_premultiplied(160, 160, 170, 160);
+                self.painter.line_segment(
+                    [first_screen, cursor_screen],
+                    egui::Stroke::new(2.0, color),
+                );
+                self.painter.circle_filled(first_screen, 5.0, color);
+            }
+            return;
+        }
+
+        // Point tool preview
+        if active_tool == Tool::Point {
+            if let Some((snap_pos, kind)) = point_preview {
+                let screen = self.canvas.dvec2_to_screen(snap_pos, self.center);
+                match kind {
+                    PointPreviewKind::Existing => {
+                        // Highlight existing point (blue ring)
+                        self.painter.circle_stroke(
+                            screen,
+                            8.0,
+                            egui::Stroke::new(2.0, egui::Color32::from_rgba_premultiplied(60, 160, 255, 180)),
+                        );
+                    }
+                    PointPreviewKind::OnEdge => {
+                        // Preview split-on-edge point (orange)
+                        self.painter.circle_filled(
+                            screen,
+                            5.0,
+                            egui::Color32::from_rgba_premultiplied(255, 180, 50, 180),
+                        );
+                        self.painter.circle_stroke(
+                            screen,
+                            5.0,
+                            egui::Stroke::new(1.5, egui::Color32::from_rgba_premultiplied(255, 140, 0, 220)),
+                        );
+                    }
+                    PointPreviewKind::New => {
+                        // Preview new point (white with blue stroke)
+                        self.painter.circle_filled(
+                            screen,
+                            5.0,
+                            egui::Color32::from_rgba_premultiplied(255, 255, 255, 140),
+                        );
+                        self.painter.circle_stroke(
+                            screen,
+                            5.0,
+                            egui::Stroke::new(1.5, egui::Color32::from_rgba_premultiplied(60, 160, 255, 180)),
+                        );
+                    }
+                }
+            }
+            return;
+        }
+
         let Some(cursor_world) = self.canvas.cursor_world_pos else {
             return;
         };
         let cursor_screen = self.canvas.dvec2_to_screen(cursor_world, self.center);
 
         let color = match active_tool {
+            Tool::Cutout => egui::Color32::from_rgba_premultiplied(255, 100, 100, 160),
             Tool::Room => egui::Color32::from_rgba_premultiplied(70, 180, 130, 160),
             Tool::Wall => egui::Color32::from_rgba_premultiplied(180, 180, 180, 160),
             Tool::Door => egui::Color32::from_rgba_premultiplied(180, 120, 60, 160),
@@ -591,10 +717,12 @@ impl DrawCtx<'_> {
             let tool_hint = match active_tool {
                 Tool::Select => "Режим выбора — кликните на объект",
                 Tool::Point => "Кликните для размещения точки",
-                Tool::Room => "Сначала создайте точки (P), затем соберите контур",
-                Tool::Wall => "Сначала создайте точки (P), затем соберите полигон",
-                Tool::Door => "Сначала создайте точки (P), затем полигон двери",
-                Tool::Window => "Сначала создайте точки (P), затем полигон окна",
+                Tool::Edge => "Кликните на две точки для создания ребра",
+                Tool::Cutout => "Кликните 3+ точки для вырезания из комнаты",
+                Tool::Room => "Сначала создайте точки (2), затем соберите контур",
+                Tool::Wall => "Сначала создайте точки (2), затем соберите полигон",
+                Tool::Door => "Сначала создайте точки (2), затем полигон двери",
+                Tool::Window => "Сначала создайте точки (2), затем полигон окна",
                 Tool::Label => "Кликните для размещения надписи",
             };
             self.painter.text(

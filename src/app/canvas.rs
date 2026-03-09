@@ -2,8 +2,19 @@ use eframe::egui;
 use glam::DVec2;
 
 use super::draw::DrawCtx;
-use super::{App, Selection, Tool, snap, snap_to_point};
+use super::{App, Selection, Tool, snap, snap_to_grid, snap_to_point};
 use crate::model::{Label, Opening, OpeningKind, Point, Project, Room, Wall, distance_to_segment, point_in_polygon};
+
+// ---------------------------------------------------------------------------
+// Point preview kind (for draw_tool_preview)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointPreviewKind {
+    Existing,
+    OnEdge,
+    New,
+}
 
 // ---------------------------------------------------------------------------
 // Hit-test (returns Selection directly)
@@ -82,6 +93,24 @@ impl App {
             let space_held = ui.input(|i| i.key_down(egui::Key::Space));
             self.handle_pan_zoom(&response, ui, rect, space_held);
 
+            // WASD camera movement
+            if !ui.ctx().wants_keyboard_input() {
+                let base_speed = 400.0 / self.canvas.zoom;
+                let mut dx = 0.0_f32;
+                let mut dy = 0.0_f32;
+                ui.input(|i| {
+                    if i.key_down(egui::Key::W) { dy += base_speed; }
+                    if i.key_down(egui::Key::S) { dy -= base_speed; }
+                    if i.key_down(egui::Key::A) { dx += base_speed; }
+                    if i.key_down(egui::Key::D) { dx -= base_speed; }
+                });
+                if dx != 0.0 || dy != 0.0 {
+                    self.canvas.offset.x += dx;
+                    self.canvas.offset.y += dy;
+                    ctx.request_repaint();
+                }
+            }
+
             painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(45, 45, 48));
             self.canvas.draw_grid(&painter, rect);
 
@@ -91,15 +120,40 @@ impl App {
 
             let shift_held = ui.input(|i| i.modifiers.shift);
             match self.active_tool {
-                Tool::Select => self.handle_select_tool(ui, &response, rect, space_held),
+                Tool::Select => self.handle_select_tool(ui, &response, rect, space_held, shift_held),
                 Tool::Point => {
                     self.handle_point_tool(&response, rect, shift_held, space_held);
                 }
-                Tool::Room | Tool::Wall | Tool::Door | Tool::Window => {
+                Tool::Edge => self.handle_edge_tool(ui, &response, rect, space_held),
+                Tool::Room | Tool::Cutout | Tool::Wall | Tool::Door | Tool::Window => {
                     self.handle_contour_tool(ui, &response, rect, space_held);
                 }
                 Tool::Label => self.handle_label_tool(&response, rect, space_held),
             }
+
+            // Compute point tool preview position
+            let point_preview = if self.active_tool == Tool::Point {
+                self.canvas.cursor_world_pos.map(|world_pos| {
+                    let snap_result = snap(
+                        world_pos,
+                        &self.project.points,
+                        &self.project.edges,
+                        self.canvas.visible_grid_step(),
+                        self.canvas.zoom,
+                        !shift_held,
+                    );
+                    let kind = if snap_result.snapped_point.is_some() {
+                        PointPreviewKind::Existing
+                    } else if snap_result.snapped_edge.is_some() {
+                        PointPreviewKind::OnEdge
+                    } else {
+                        PointPreviewKind::New
+                    };
+                    (snap_result.position, kind)
+                })
+            } else {
+                None
+            };
 
             // Render (back to front)
             let draw = DrawCtx {
@@ -119,7 +173,7 @@ impl App {
             draw.draw_points();
             draw.draw_measurement_labels();
             draw.draw_labels();
-            draw.draw_tool_preview(self.active_tool, &self.tool_state.points);
+            draw.draw_tool_preview(self.active_tool, &self.tool_state.points, point_preview);
 
             draw.draw_empty_hint(rect, self.active_tool);
             draw.draw_status_bar(rect);
@@ -161,9 +215,10 @@ impl App {
         response: &egui::Response,
         rect: egui::Rect,
         space_held: bool,
+        shift_held: bool,
     ) {
         self.handle_select_click(response, rect, space_held);
-        self.handle_select_drag(response, rect, space_held);
+        self.handle_select_drag(response, rect, space_held, shift_held);
         self.handle_select_keys(ui);
     }
 
@@ -192,6 +247,7 @@ impl App {
         response: &egui::Response,
         rect: egui::Rect,
         space_held: bool,
+        shift_held: bool,
     ) {
         if response.drag_started()
             && !space_held
@@ -215,8 +271,13 @@ impl App {
 
         match self.selection {
             Selection::Point(pid) => {
+                let snapped = if shift_held {
+                    cursor_pt
+                } else {
+                    snap_to_grid(cursor_pt, self.canvas.visible_grid_step())
+                };
                 if let Some(point) = self.project.point_mut(pid) {
-                    point.position = cursor_pt;
+                    point.position = snapped;
                 }
             }
             Selection::Label(lid) => {
@@ -260,19 +321,29 @@ impl App {
         let snap_result = snap(
             world_pos,
             &self.project.points,
-            self.canvas.grid_step,
+            &self.project.edges,
+            self.canvas.visible_grid_step(),
             self.canvas.zoom,
             !shift_held,
         );
 
         if let Some(existing_id) = snap_result.snapped_point {
+            // Clicked near existing point: just select it.
             self.selection = Selection::Point(existing_id);
+        } else if let Some((edge_id, _pa, _pb)) = snap_result.snapped_edge {
+            // Clicked on edge: split it and select the new point.
+            self.history.snapshot(&self.project);
+            let new_id = self.project.split_edge(edge_id, snap_result.position);
+            self.selection = Selection::Point(new_id);
+            self.edit_snapshot_version = Some(self.history.version);
         } else {
+            // Clicked empty space: create free-standing point.
             let point = Point::new(snap_result.position, self.project.defaults.point_height);
             let point_id = point.id;
             self.history.snapshot(&self.project);
             self.project.points.push(point);
             self.selection = Selection::Point(point_id);
+            self.edit_snapshot_version = Some(self.history.version);
         }
     }
 
@@ -315,7 +386,6 @@ impl App {
 
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.tool_state.points.clear();
-            self.tool_state.building_cutout = false;
         }
     }
 
@@ -331,13 +401,27 @@ impl App {
         self.project.ensure_contour_edges(&points);
 
         match self.active_tool {
-            Tool::Room if self.tool_state.building_cutout => {
-                if let Selection::Room(room_id) = self.selection
-                    && let Some(room) = self.project.room_mut(room_id)
-                {
-                    room.cutouts.push(points);
+            Tool::Cutout => {
+                let positions = self.project.resolve_positions(&points);
+                if positions.len() >= 3 {
+                    let centroid = DVec2::new(
+                        positions.iter().map(|p| p.x).sum::<f64>() / positions.len() as f64,
+                        positions.iter().map(|p| p.y).sum::<f64>() / positions.len() as f64,
+                    );
+                    let room_id = self.project.rooms.iter().find_map(|room| {
+                        let room_pts = self.project.resolve_positions(&room.points);
+                        if point_in_polygon(centroid, &room_pts) {
+                            Some(room.id)
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(rid) = room_id
+                        && let Some(room) = self.project.room_mut(rid)
+                    {
+                        room.cutouts.push(points);
+                    }
                 }
-                self.tool_state.building_cutout = false;
             }
             Tool::Room => {
                 let room = Room::new(
@@ -349,30 +433,77 @@ impl App {
                 self.selection = Selection::Room(room_id);
             }
             Tool::Wall => {
-                let wall = Wall::new(points);
+                let color = self.project.defaults.wall_color;
+                let wall = Wall::new(points, color);
                 let wall_id = wall.id;
                 self.project.walls.push(wall);
                 self.selection = Selection::Wall(wall_id);
             }
             Tool::Door | Tool::Window => {
-                let kind = match self.active_tool {
-                    Tool::Door => OpeningKind::Door {
-                        height: self.project.defaults.door_height,
-                        width: self.project.defaults.door_width,
-                    },
-                    _ => OpeningKind::Window {
-                        height: self.project.defaults.window_height,
-                        width: self.project.defaults.window_width,
-                        sill_height: self.project.defaults.window_sill_height,
-                        reveal_width: self.project.defaults.window_reveal_width,
-                    },
+                let (kind, color) = match self.active_tool {
+                    Tool::Door => (
+                        OpeningKind::Door {
+                            height: self.project.defaults.door_height,
+                            width: self.project.defaults.door_width,
+                            swing_edge: 0,
+                            swing_outward: true,
+                        },
+                        self.project.defaults.door_color,
+                    ),
+                    _ => (
+                        OpeningKind::Window {
+                            height: self.project.defaults.window_height,
+                            width: self.project.defaults.window_width,
+                            sill_height: self.project.defaults.window_sill_height,
+                            reveal_width: self.project.defaults.window_reveal_width,
+                        },
+                        self.project.defaults.window_color,
+                    ),
                 };
-                let opening = Opening::new(points, kind);
+                let opening = Opening::new(points, kind, color);
                 let opening_id = opening.id;
                 self.project.openings.push(opening);
                 self.selection = Selection::Opening(opening_id);
             }
             _ => {}
+        }
+        self.edit_snapshot_version = Some(self.history.version);
+    }
+
+    // ---- Edge tool ----------------------------------------------------------
+
+    fn handle_edge_tool(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        rect: egui::Rect,
+        space_held: bool,
+    ) {
+        if response.clicked()
+            && !space_held
+            && let Some(hover) = response.hover_pos()
+        {
+            let world_pos = self.canvas.screen_to_world_dvec2(hover, rect.center());
+            if let Some(point_id) =
+                snap_to_point(world_pos, &self.project.points, self.canvas.zoom)
+            {
+                if self.tool_state.points.last() == Some(&point_id) {
+                    return;
+                }
+                self.tool_state.points.push(point_id);
+                if self.tool_state.points.len() == 2 {
+                    let a = self.tool_state.points[0];
+                    let b = self.tool_state.points[1];
+                    self.history.snapshot(&self.project);
+                    self.project.ensure_edge(a, b);
+                    self.tool_state.points.clear();
+                    self.edit_snapshot_version = Some(self.history.version);
+                }
+            }
+        }
+
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.tool_state.points.clear();
         }
     }
 
@@ -394,6 +525,7 @@ impl App {
             self.history.snapshot(&self.project);
             self.project.labels.push(label);
             self.selection = Selection::Label(label_id);
+            self.edit_snapshot_version = Some(self.history.version);
         }
     }
 }

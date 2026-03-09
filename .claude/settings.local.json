@@ -24,7 +24,18 @@
       "WebFetch(domain:docs.rs)",
       "Bash(wc:*)",
       "WebFetch(domain:github.com)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(cd \"C:/Users/Desmon2d/source/repos/Smetana\" && cargo test 2>&1)",
+      "Bash(cd \"C:/Users/Desmon2d/source/repos/Smetana\" && cargo test round_trip 2>&1)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo clippy --fix --bin \"smetana\" -p smetana --allow-dirty 2>&1)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo fmt -- --check 2>&1)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo fmt 2>&1)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo clippy 2>&1 && cargo fmt --check 2>&1)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo test 2>&1 && cargo clippy 2>&1 && cargo fmt --check 2>&1)",
+      "Bash(cd \"C:/Users/Desmon2d/source/repos/Smetana\" && cargo build 2>&1 && cargo test 2>&1)",
+      "Bash(cd \"C:/Users/Desmon2d/source/repos/Smetana\" && cargo clippy 2>&1)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo test 2>&1 && cargo clippy 2>&1)",
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo clippy 2>&1 && cargo test 2>&1)"
     ]
   },
   "prefersReducedMotion": false

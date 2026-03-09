@@ -13,7 +13,7 @@ mod panels;
 mod project_list;
 pub mod viewport;
 
-pub use viewport::{Canvas, VisibilityMode, snap, snap_to_point};
+pub use viewport::{Canvas, VisibilityMode, snap, snap_to_grid, snap_to_point};
 
 // ---------------------------------------------------------------------------
 // Tool
@@ -23,10 +23,12 @@ pub use viewport::{Canvas, VisibilityMode, snap, snap_to_point};
 pub enum Tool {
     Select,
     Point,
+    Edge,
+    Cutout,
     Room,
-    Wall,
     Door,
     Window,
+    Wall,
     Label,
 }
 
@@ -65,10 +67,8 @@ impl Selection {
 
 #[derive(Default)]
 struct ToolState {
-    /// Points collected so far for the contour/polygon.
+    /// Points collected so far for the contour/polygon or edge tool.
     points: Vec<Uuid>,
-    /// Whether we are building a cutout (Room tool only).
-    building_cutout: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +176,7 @@ pub struct App {
     last_saved_version: u64,
     last_save_time: Instant,
     label_scale: f32,
+    copied_color: Option<[u8; 4]>,
 }
 
 impl App {
@@ -204,6 +205,7 @@ impl App {
             last_saved_version: 0,
             last_save_time: Instant::now(),
             label_scale: 1.0,
+            copied_color: None,
         }
     }
 
@@ -294,7 +296,7 @@ impl App {
         };
         self.history.snapshot(&self.project);
         match self.selection {
-            Selection::Point(_) => self.project.remove_point(id),
+            Selection::Point(_) => self.project.smart_remove_point(id),
             Selection::Edge(_) => self.project.remove_edge(id),
             Selection::Room(_) => self.project.remove_room(id),
             Selection::Wall(_) => self.project.remove_wall(id),
@@ -308,8 +310,23 @@ impl App {
     fn set_tool(&mut self, tool: Tool) {
         if self.active_tool != tool {
             self.tool_state.points.clear();
-            self.tool_state.building_cutout = false;
             self.active_tool = tool;
+        }
+    }
+
+    /// Clear selection if the referenced entity no longer exists in the project.
+    fn validate_selection(&mut self) {
+        let valid = match self.selection {
+            Selection::None => true,
+            Selection::Point(id) => self.project.point(id).is_some(),
+            Selection::Edge(id) => self.project.edge(id).is_some(),
+            Selection::Room(id) => self.project.room(id).is_some(),
+            Selection::Wall(id) => self.project.wall(id).is_some(),
+            Selection::Opening(id) => self.project.opening(id).is_some(),
+            Selection::Label(id) => self.project.label(id).is_some(),
+        };
+        if !valid {
+            self.selection = Selection::None;
         }
     }
 }
