@@ -93,16 +93,16 @@ impl App {
             let space_held = ui.input(|i| i.key_down(egui::Key::Space));
             self.handle_pan_zoom(&response, ui, rect, space_held);
 
-            // WASD camera movement
+            // WASD / Arrow camera movement
             if !ui.ctx().wants_keyboard_input() {
-                let base_speed = 400.0 / self.canvas.zoom;
                 let mut dx = 0.0_f32;
                 let mut dy = 0.0_f32;
                 ui.input(|i| {
-                    if i.key_down(egui::Key::W) { dy += base_speed; }
-                    if i.key_down(egui::Key::S) { dy -= base_speed; }
-                    if i.key_down(egui::Key::A) { dx += base_speed; }
-                    if i.key_down(egui::Key::D) { dx -= base_speed; }
+                    let speed = if i.modifiers.shift { 30.0 } else { 15.0 } / self.canvas.zoom;
+                    if i.key_down(egui::Key::W) || i.key_down(egui::Key::ArrowUp) { dy += speed; }
+                    if i.key_down(egui::Key::S) || i.key_down(egui::Key::ArrowDown) { dy -= speed; }
+                    if i.key_down(egui::Key::A) || i.key_down(egui::Key::ArrowLeft) { dx += speed; }
+                    if i.key_down(egui::Key::D) || i.key_down(egui::Key::ArrowRight) { dx -= speed; }
                 });
                 if dx != 0.0 || dy != 0.0 {
                     self.canvas.offset.x += dx;
