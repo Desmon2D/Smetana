@@ -277,16 +277,24 @@ pub struct Room {
     /// Cutouts (columns, shafts): each is an ordered list of point IDs.
     #[serde(default)]
     pub cutouts: Vec<Vec<Uuid>>,
+    /// Fill color (RGBA).
+    #[serde(default = "Room::default_color")]
+    pub color: [u8; 4],
 }
 
 impl Room {
-    pub fn new(name: String, points: Vec<Uuid>) -> Self {
+    pub fn new(name: String, points: Vec<Uuid>, color: [u8; 4]) -> Self {
         Self {
             id: Uuid::new_v4(),
             name,
             points,
             cutouts: Vec::new(),
+            color,
         }
+    }
+
+    pub fn default_color() -> [u8; 4] {
+        [70, 130, 180, 45]
     }
 
     /// Floor area in mm² (outer contour minus cutouts).
@@ -977,7 +985,7 @@ mod tests {
 
         project.ensure_contour_edges(&ids);
 
-        let room = Room::new("Test Room".to_string(), ids);
+        let room = Room::new("Test Room".to_string(), ids, Room::default_color());
         let room_id = room.id;
         project.rooms.push(room);
 
@@ -1085,7 +1093,7 @@ mod tests {
         project.ensure_contour_edges(&ids);
         assert_eq!(project.edges.len(), 4);
 
-        project.rooms.push(Room::new("Room".to_string(), ids.clone()));
+        project.rooms.push(Room::new("Room".to_string(), ids.clone(), Room::default_color()));
         project.walls.push(Wall::new(ids.clone(), [180, 180, 180, 255]));
         project.openings.push(Opening::new(
             ids.clone(),
@@ -1121,7 +1129,7 @@ mod tests {
             project.points.push(Point::new(DVec2::ZERO, 2700.0));
             project.points.last_mut().unwrap().id = id;
         }
-        let room = Room::new("R".to_string(), ids.clone());
+        let room = Room::new("R".to_string(), ids.clone(), Room::default_color());
         let room_id = room.id;
         project.rooms.push(room);
 
@@ -1192,7 +1200,7 @@ mod tests {
             });
         }
         project.ensure_contour_edges(&ids);
-        project.rooms.push(Room::new("R".to_string(), ids.clone()));
+        project.rooms.push(Room::new("R".to_string(), ids.clone(), Room::default_color()));
 
         let edge_id = project.find_edge(ids[2], ids[0]).unwrap().id;
         let mid = (positions[2] + positions[0]) / 2.0;
@@ -1266,7 +1274,7 @@ mod tests {
             project.points.last_mut().unwrap().id = id;
         }
         project.ensure_contour_edges(&ids);
-        project.rooms.push(Room::new("R".to_string(), ids.clone()));
+        project.rooms.push(Room::new("R".to_string(), ids.clone(), Room::default_color()));
 
         project.smart_remove_point(ids[1]);
 

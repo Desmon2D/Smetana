@@ -112,7 +112,7 @@ mod tests {
         assert_eq!(project.edges.len(), 4);
 
         // Add a room
-        let room = Room::new("Кухня".to_string(), ids.clone());
+        let room = Room::new("Кухня".to_string(), ids.clone(), Room::default_color());
         let room_id = room.id;
         project.rooms.push(room);
 

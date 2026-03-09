@@ -293,17 +293,23 @@ impl DrawCtx<'_> {
             return;
         }
 
-        for (i, room) in self.project.rooms.iter().enumerate() {
+        for room in &self.project.rooms {
             let screen_pts =
                 polygon_screen_coords(&room.points, self.project, self.canvas, self.center);
             if screen_pts.len() < 3 {
                 continue;
             }
 
-            let (r, g, b) = ROOM_COLORS[i % ROOM_COLORS.len()];
+            let [r, g, b, base_alpha] = room.color;
             let is_selected = self.selection == Selection::Room(room.id);
             let is_hovered = self.hover == Selection::Room(room.id);
-            let alpha = if is_selected { 60 } else if is_hovered { 55 } else { 40 };
+            let alpha = if is_selected {
+                base_alpha.saturating_add(20)
+            } else if is_hovered {
+                base_alpha.saturating_add(15)
+            } else {
+                base_alpha
+            };
             let fill = egui::Color32::from_rgba_unmultiplied(r, g, b, alpha);
 
             let hole_pts: Vec<Vec<egui::Pos2>> = room
@@ -627,7 +633,7 @@ impl DrawCtx<'_> {
         }
 
         // Room name + area at centroid
-        for (i, room) in self.project.rooms.iter().enumerate() {
+        for room in &self.project.rooms {
             let screen_pts =
                 polygon_screen_coords(&room.points, self.project, self.canvas, self.center);
             if screen_pts.is_empty() {
@@ -639,7 +645,7 @@ impl DrawCtx<'_> {
             let cy: f32 =
                 screen_pts.iter().map(|p| p.y).sum::<f32>() / screen_pts.len() as f32;
 
-            let (r, g, b) = ROOM_COLORS[i % ROOM_COLORS.len()];
+            let [r, g, b, _] = room.color;
             let room_label_color = egui::Color32::from_rgb(r, g, b);
 
             self.painter.text(

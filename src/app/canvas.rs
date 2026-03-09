@@ -437,9 +437,13 @@ impl App {
                 }
             }
             Tool::Room => {
+                use super::draw::ROOM_COLORS;
+                let idx = self.project.rooms.len();
+                let (r, g, b) = ROOM_COLORS[idx % ROOM_COLORS.len()];
                 let room = Room::new(
-                    format!("Комната {}", self.project.rooms.len() + 1),
+                    format!("Комната {}", idx + 1),
                     points,
+                    [r, g, b, 45],
                 );
                 let room_id = room.id;
                 self.project.rooms.push(room);

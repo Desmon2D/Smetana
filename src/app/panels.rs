@@ -691,9 +691,18 @@ impl App {
         let perimeter_m = room.perimeter(&self.project) / 1000.0;
         let point_count = room.points.len();
         let cutout_count = room.cutouts.len();
+        let current_color = room.color;
+        let mut color = egui::Color32::from_rgba_premultiplied(
+            current_color[0],
+            current_color[1],
+            current_color[2],
+            current_color[3],
+        );
 
         ui.label("Комната");
         ui.add_space(8.0);
+
+        self.ensure_edit_snapshot();
 
         let Some(room) = self.project.room_mut(id) else {
             return;
@@ -702,6 +711,27 @@ impl App {
             ui.label("Название:");
             if ui.text_edit_singleline(&mut room.name).changed() {
                 self.history.mark_dirty();
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Цвет:");
+            if ui.color_edit_button_srgba(&mut color).changed()
+                && let Some(room) = self.project.room_mut(id)
+            {
+                room.color = [color.r(), color.g(), color.b(), color.a()];
+            }
+        });
+
+        ui.horizontal(|ui| {
+            if ui.small_button("Копировать цвет").clicked() {
+                self.copied_color = Some(current_color);
+            }
+            if let Some(cc) = self.copied_color
+                && ui.small_button("Вставить цвет").clicked()
+                && let Some(room) = self.project.room_mut(id)
+            {
+                room.color = cc;
             }
         });
 
