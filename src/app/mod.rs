@@ -315,6 +315,7 @@ impl App {
     fn set_tool(&mut self, tool: Tool) {
         if self.active_tool != tool {
             self.tool_state.points.clear();
+            self.dragging_room_name = None;
             self.active_tool = tool;
         }
     }

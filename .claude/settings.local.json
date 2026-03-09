@@ -35,7 +35,12 @@
       "Bash(cd \"C:/Users/Desmon2d/source/repos/Smetana\" && cargo build 2>&1 && cargo test 2>&1)",
       "Bash(cd \"C:/Users/Desmon2d/source/repos/Smetana\" && cargo clippy 2>&1)",
       "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo test 2>&1 && cargo clippy 2>&1)",
-      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo clippy 2>&1 && cargo test 2>&1)"
+      "Bash(cd /c/Users/Desmon2d/source/repos/Smetana && cargo clippy 2>&1 && cargo test 2>&1)",
+      "Bash(gh run:*)",
+      "Bash(gh repo:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)"
     ]
   },
   "prefersReducedMotion": false

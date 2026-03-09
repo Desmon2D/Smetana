@@ -304,8 +304,9 @@ impl App {
             {
                 let pos = self.project.point(pid).map(|p| p.position);
                 if let Some(pos) = pos {
+                    let merge_threshold = (5.0_f64 / self.canvas.zoom as f64).max(0.5);
                     let merge_target = self.project.points.iter()
-                        .find(|p| p.id != pid && p.position.distance(pos) < 0.5)
+                        .find(|p| p.id != pid && p.position.distance(pos) < merge_threshold)
                         .map(|p| p.id);
                     if let Some(target_id) = merge_target {
                         self.project.merge_points(target_id, pid);

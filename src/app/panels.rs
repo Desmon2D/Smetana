@@ -145,7 +145,7 @@ pub(super) fn show_defaults_form(ui: &mut egui::Ui, defaults: &mut ProjectDefaul
     egui::Grid::new("defaults_colors")
         .num_columns(2)
         .show(ui, |ui| {
-            let mut wall_c = egui::Color32::from_rgba_premultiplied(
+            let mut wall_c = egui::Color32::from_rgba_unmultiplied(
                 defaults.wall_color[0], defaults.wall_color[1],
                 defaults.wall_color[2], defaults.wall_color[3],
             );
@@ -155,7 +155,7 @@ pub(super) fn show_defaults_form(ui: &mut egui::Ui, defaults: &mut ProjectDefaul
             }
             ui.end_row();
 
-            let mut door_c = egui::Color32::from_rgba_premultiplied(
+            let mut door_c = egui::Color32::from_rgba_unmultiplied(
                 defaults.door_color[0], defaults.door_color[1],
                 defaults.door_color[2], defaults.door_color[3],
             );
@@ -165,7 +165,7 @@ pub(super) fn show_defaults_form(ui: &mut egui::Ui, defaults: &mut ProjectDefaul
             }
             ui.end_row();
 
-            let mut window_c = egui::Color32::from_rgba_premultiplied(
+            let mut window_c = egui::Color32::from_rgba_unmultiplied(
                 defaults.window_color[0], defaults.window_color[1],
                 defaults.window_color[2], defaults.window_color[3],
             );
@@ -611,11 +611,13 @@ impl App {
                 && let Some(edge) = self.project.edge_mut(id)
             {
                 edge.label_flip_side = !edge.label_flip_side;
+                self.history.mark_dirty();
             }
             if ui.button("Перевернуть").clicked()
                 && let Some(edge) = self.project.edge_mut(id)
             {
                 edge.label_flip_text = !edge.label_flip_text;
+                self.history.mark_dirty();
             }
         });
         let mut label_visible = self.project.edge(id).is_some_and(|e| !e.label_hidden);
@@ -633,9 +635,11 @@ impl App {
         egui::ComboBox::from_id_salt("edge_pattern")
             .selected_text(cur_pattern.label())
             .show_ui(ui, |ui| {
-                for &p in LinePattern::ALL {
-                    if ui.selectable_value(&mut self.project.edge_mut(id).unwrap().line_pattern, p, p.label()).changed() {
-                        self.history.mark_dirty();
+                if let Some(edge) = self.project.edge_mut(id) {
+                    for &p in LinePattern::ALL {
+                        if ui.selectable_value(&mut edge.line_pattern, p, p.label()).changed() {
+                            self.history.mark_dirty();
+                        }
                     }
                 }
             });
@@ -644,9 +648,11 @@ impl App {
         egui::ComboBox::from_id_salt("edge_arrow")
             .selected_text(cur_arrow.label())
             .show_ui(ui, |ui| {
-                for &a in ArrowMode::ALL {
-                    if ui.selectable_value(&mut self.project.edge_mut(id).unwrap().arrow_mode, a, a.label()).changed() {
-                        self.history.mark_dirty();
+                if let Some(edge) = self.project.edge_mut(id) {
+                    for &a in ArrowMode::ALL {
+                        if ui.selectable_value(&mut edge.arrow_mode, a, a.label()).changed() {
+                            self.history.mark_dirty();
+                        }
                     }
                 }
             });
@@ -670,7 +676,7 @@ impl App {
         let point_count = room.points.len();
         let cutout_count = room.cutouts.len();
         let current_color = room.color;
-        let mut color = egui::Color32::from_rgba_premultiplied(
+        let mut color = egui::Color32::from_rgba_unmultiplied(
             current_color[0],
             current_color[1],
             current_color[2],
@@ -806,7 +812,7 @@ impl App {
 
         self.ensure_edit_snapshot();
 
-        let mut color = egui::Color32::from_rgba_premultiplied(
+        let mut color = egui::Color32::from_rgba_unmultiplied(
             current_color[0],
             current_color[1],
             current_color[2],
@@ -914,6 +920,7 @@ impl App {
             .label(id)
             .is_some_and(|l| l.text.trim().is_empty())
         {
+            self.history.snapshot(&self.project);
             self.project.remove_label(id);
             self.selection = Selection::None;
             return;
