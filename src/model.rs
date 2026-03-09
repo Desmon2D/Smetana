@@ -182,6 +182,9 @@ pub enum OpeningKind {
         height: f64,
         /// Door width (mm)
         width: f64,
+        /// Reveal width (mm)
+        #[serde(default)]
+        reveal_width: f64,
         /// Which polygon edge the swing arc is drawn on (0-based index)
         #[serde(default)]
         swing_edge: usize,
@@ -549,6 +552,8 @@ pub struct ProjectDefaults {
     pub point_height: f64,
     pub door_height: f64,
     pub door_width: f64,
+    #[serde(default = "default_door_reveal_width")]
+    pub door_reveal_width: f64,
     pub window_height: f64,
     pub window_width: f64,
     pub window_sill_height: f64,
@@ -559,6 +564,10 @@ pub struct ProjectDefaults {
     pub door_color: [u8; 4],
     #[serde(default = "default_window_color")]
     pub window_color: [u8; 4],
+}
+
+fn default_door_reveal_width() -> f64 {
+    0.0
 }
 
 fn default_wall_color() -> [u8; 4] {
@@ -579,6 +588,7 @@ impl Default for ProjectDefaults {
             point_height: 2700.0,
             door_height: 2100.0,
             door_width: 900.0,
+            door_reveal_width: 0.0,
             window_height: 1400.0,
             window_width: 1200.0,
             window_sill_height: 900.0,
@@ -1082,6 +1092,7 @@ mod tests {
             OpeningKind::Door {
                 height: 2100.0,
                 width: 900.0,
+                reveal_width: 0.0,
                 swing_edge: 0,
                 swing_outward: true,
                 swing_mirrored: false,

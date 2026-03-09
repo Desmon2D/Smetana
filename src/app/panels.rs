@@ -98,6 +98,13 @@ pub(super) fn show_defaults_form(ui: &mut egui::Ui, defaults: &mut ProjectDefaul
                     .speed(10.0),
             );
             ui.end_row();
+            ui.label("Откос (мм):");
+            ui.add(
+                egui::DragValue::new(&mut defaults.door_reveal_width)
+                    .range(0.0..=2000.0)
+                    .speed(5.0),
+            );
+            ui.end_row();
         });
     ui.add_space(4.0);
     ui.label("Окно:");
@@ -811,12 +818,26 @@ impl App {
                 OpeningKind::Door {
                     height,
                     width,
+                    reveal_width,
                     swing_edge,
                     swing_outward,
                     swing_mirrored,
                 } => {
                     labeled_drag(ui, "Высота (мм):", height, 500.0..=3500.0, 10.0);
                     labeled_drag(ui, "Ширина (мм):", width, 300.0..=3000.0, 10.0);
+                    labeled_drag(ui, "Откос (мм):", reveal_width, 0.0..=2000.0, 5.0);
+                    let reveal_perimeter = *height * 2.0 + *width;
+                    let reveal_area = reveal_perimeter * *reveal_width;
+                    labeled_value(
+                        ui,
+                        "Периметр откоса:",
+                        format!("{:.3} м", reveal_perimeter / 1000.0),
+                    );
+                    labeled_value(
+                        ui,
+                        "Площадь откоса:",
+                        format!("{:.3} м²", reveal_area / 1_000_000.0),
+                    );
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         if ui.button("Направление").clicked() {
@@ -845,7 +866,19 @@ impl App {
                         0.0..=2500.0,
                         10.0,
                     );
-                    labeled_drag(ui, "Откос (мм):", reveal_width, 0.0..=500.0, 5.0);
+                    labeled_drag(ui, "Откос (мм):", reveal_width, 0.0..=2000.0, 5.0);
+                    let reveal_perimeter = *height * 2.0 + *width;
+                    let reveal_area = reveal_perimeter * *reveal_width;
+                    labeled_value(
+                        ui,
+                        "Периметр откоса:",
+                        format!("{:.3} м", reveal_perimeter / 1000.0),
+                    );
+                    labeled_value(
+                        ui,
+                        "Площадь откоса:",
+                        format!("{:.3} м²", reveal_area / 1_000_000.0),
+                    );
                 }
             }
         }

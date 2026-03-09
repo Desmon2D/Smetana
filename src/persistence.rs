@@ -127,6 +127,7 @@ mod tests {
             OpeningKind::Door {
                 height: 2100.0,
                 width: 900.0,
+                reveal_width: 0.0,
                 swing_edge: 0,
                 swing_outward: true,
                 swing_mirrored: false,

@@ -458,6 +458,7 @@ impl App {
                         OpeningKind::Door {
                             height: self.project.defaults.door_height,
                             width: self.project.defaults.door_width,
+                            reveal_width: self.project.defaults.door_reveal_width,
                             swing_edge: 0,
                             swing_outward: true,
                             swing_mirrored: false,
