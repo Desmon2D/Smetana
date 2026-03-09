@@ -644,8 +644,8 @@ impl App {
         ui.separator();
         labeled_value(ui, "Высота в A:", format!("{:.1} мм", height_a));
         labeled_value(ui, "Высота в B:", format!("{:.1} мм", height_b));
-        labeled_value(ui, "Площадь брутто:", format!("{:.4} м²", wall_area_gross));
-        labeled_value(ui, "Площадь нетто:", format!("{:.4} м²", wall_area_net));
+        labeled_value(ui, "Площадь общая:", format!("{:.4} м²", wall_area_gross));
+        labeled_value(ui, "Площадь чистая:", format!("{:.4} м²", wall_area_net));
     }
 
     fn show_room_properties(&mut self, ui: &mut egui::Ui, id: uuid::Uuid) {
