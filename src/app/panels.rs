@@ -597,7 +597,7 @@ impl App {
             edge.distance_override = None;
         }
 
-        labeled_value(ui, "Вычисленное:", format!("{:.0} мм", computed_dist));
+        labeled_value(ui, "Вычисленное:", format!("{:.1} мм", computed_dist));
 
         ui.add_space(4.0);
 
@@ -642,10 +642,10 @@ impl App {
 
         ui.add_space(4.0);
         ui.separator();
-        labeled_value(ui, "Высота в A:", format!("{:.0} мм", height_a));
-        labeled_value(ui, "Высота в B:", format!("{:.0} мм", height_b));
-        labeled_value(ui, "Площадь брутто:", format!("{:.3} м²", wall_area_gross));
-        labeled_value(ui, "Площадь нетто:", format!("{:.3} м²", wall_area_net));
+        labeled_value(ui, "Высота в A:", format!("{:.1} мм", height_a));
+        labeled_value(ui, "Высота в B:", format!("{:.1} мм", height_b));
+        labeled_value(ui, "Площадь брутто:", format!("{:.4} м²", wall_area_gross));
+        labeled_value(ui, "Площадь нетто:", format!("{:.4} м²", wall_area_net));
     }
 
     fn show_room_properties(&mut self, ui: &mut egui::Ui, id: uuid::Uuid) {
@@ -674,8 +674,8 @@ impl App {
 
         ui.add_space(4.0);
 
-        labeled_value(ui, "Площадь пола:", format!("{:.3} м²", area_m2));
-        labeled_value(ui, "Периметр:", format!("{:.3} м", perimeter_m));
+        labeled_value(ui, "Площадь пола:", format!("{:.4} м²", area_m2));
+        labeled_value(ui, "Периметр:", format!("{:.4} м", perimeter_m));
         labeled_value(ui, "Точек:", format!("{}", point_count));
         labeled_value(ui, "Вырезов:", format!("{}", cutout_count));
 

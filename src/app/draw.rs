@@ -515,11 +515,11 @@ impl DrawCtx<'_> {
             let wall_area_net_m2 = (wall_area_gross - openings_area).max(0.0) / 1_000_000.0;
 
             let dist_str = if dist_mm >= 1000.0 {
-                format!("{:.2} м", dist_mm / 1000.0)
+                format!("{:.4} м", dist_mm / 1000.0)
             } else {
-                format!("{:.0} мм", dist_mm)
+                format!("{:.1} мм", dist_mm)
             };
-            let label = format!("{} - {:.3} м²", dist_str, wall_area_net_m2);
+            let label = format!("{} - {:.4} м²", dist_str, wall_area_net_m2);
 
             let side = if edge.label_flip_side { -1.0_f32 } else { 1.0 };
             let perp_x = -dy / screen_len * 10.0 * side;
@@ -574,7 +574,7 @@ impl DrawCtx<'_> {
             self.painter.text(
                 egui::pos2(cx, cy + 16.0 * self.label_scale),
                 egui::Align2::CENTER_CENTER,
-                format!("{:.1} м²", area_m2),
+                format!("{:.4} м²", area_m2),
                 egui::FontId::proportional(11.0 * self.label_scale),
                 room_label_color,
             );
