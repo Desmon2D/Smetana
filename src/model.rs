@@ -91,8 +91,6 @@ pub struct Edge {
     pub point_b: Uuid,
     /// Distance in mm. None = computed from point coordinates.
     pub distance_override: Option<f64>,
-    /// Angle override in degrees. None = computed from coordinates.
-    pub angle_override: Option<f64>,
     /// If true, label is displayed on the opposite side of the edge.
     #[serde(default)]
     pub label_flip_side: bool,
@@ -117,7 +115,6 @@ impl Edge {
             point_a,
             point_b,
             distance_override: None,
-            angle_override: None,
             label_flip_side: false,
             label_flip_text: false,
             label_hidden: false,
@@ -139,13 +136,6 @@ impl Edge {
         }
     }
 
-    /// Effective angle between this edge and the previous edge.
-    pub fn angle(&self, prev_edge: &Edge, points: &[Point]) -> f64 {
-        if let Some(a) = self.angle_override {
-            return a;
-        }
-        compute_angle_from_coords(prev_edge, self, points)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -388,11 +378,11 @@ impl Room {
         let has_overrides = contour.windows(2).any(|w| {
             project
                 .find_edge(w[0], w[1])
-                .is_some_and(|e| e.distance_override.is_some() || e.angle_override.is_some())
+                .is_some_and(|e| e.distance_override.is_some())
         }) || (contour.len() >= 2
             && project
                 .find_edge(*contour.last().unwrap(), contour[0])
-                .is_some_and(|e| e.distance_override.is_some() || e.angle_override.is_some()));
+                .is_some_and(|e| e.distance_override.is_some()));
 
         if has_overrides {
             Self::area_from_measurements(contour, project)
@@ -407,35 +397,25 @@ impl Room {
             return 0.0;
         }
 
-        let mut distances = Vec::with_capacity(n);
-        let mut angles = Vec::with_capacity(n);
-
-        for i in 0..n {
-            let j = (i + 1) % n;
-            let edge = match project.find_edge(contour[i], contour[j]) {
-                Some(e) => e,
-                None => return shoelace_area(&project.resolve_positions(contour)),
-            };
-            distances.push(edge.distance(&project.points));
-
-            let k = (j + 1) % n;
-            let next_edge = match project.find_edge(contour[j], contour[k]) {
-                Some(e) => e,
-                None => return shoelace_area(&project.resolve_positions(contour)),
-            };
-            angles.push(edge.angle(next_edge, &project.points));
-        }
-
         let mut vertices = Vec::with_capacity(n);
         vertices.push(DVec2::ZERO);
 
-        let mut cumulative_angle: f64 = 0.0;
-
         for i in 0..n - 1 {
-            cumulative_angle += std::f64::consts::PI - angles[i].to_radians();
-            let dir = DVec2::new(cumulative_angle.cos(), cumulative_angle.sin());
+            let j = (i + 1) % n;
+            let pos_i = project.point(contour[i]).map(|p| p.position).unwrap_or(DVec2::ZERO);
+            let pos_j = project.point(contour[j]).map(|p| p.position).unwrap_or(DVec2::ZERO);
+
+            let delta = pos_j - pos_i;
+            let coord_dist = delta.length();
+            let direction = if coord_dist > 1e-9 { delta / coord_dist } else { DVec2::ZERO };
+
+            let eff_dist = project
+                .find_edge(contour[i], contour[j])
+                .map(|e| e.distance(&project.points))
+                .unwrap_or(coord_dist);
+
             let prev = *vertices.last().unwrap();
-            vertices.push(prev + dir * distances[i]);
+            vertices.push(prev + direction * eff_dist);
         }
 
         shoelace_area(&vertices)
@@ -593,42 +573,6 @@ fn collect_neighbor_pairs(contour: &[Uuid], id: Uuid, pairs: &mut Vec<(Uuid, Uui
             }
         }
     }
-}
-
-/// Compute the interior angle at the junction of two edges.
-pub fn compute_angle_from_coords(prev: &Edge, curr: &Edge, points: &[Point]) -> f64 {
-    let shared_id = if prev.point_b == curr.point_a || prev.point_b == curr.point_b {
-        prev.point_b
-    } else if prev.point_a == curr.point_a || prev.point_a == curr.point_b {
-        prev.point_a
-    } else {
-        return 0.0;
-    };
-
-    let prev_other = if prev.point_a == shared_id {
-        prev.point_b
-    } else {
-        prev.point_a
-    };
-
-    let curr_other = if curr.point_a == shared_id {
-        curr.point_b
-    } else {
-        curr.point_a
-    };
-
-    let find = |id: Uuid| points.iter().find(|p| p.id == id);
-
-    let (Some(shared), Some(a), Some(b)) = (find(shared_id), find(prev_other), find(curr_other))
-    else {
-        return 0.0;
-    };
-
-    let v1 = a.position - shared.position;
-    let v2 = b.position - shared.position;
-
-    let angle = v1.y.atan2(v1.x) - v2.y.atan2(v2.x);
-    angle.to_degrees().rem_euclid(360.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -1541,6 +1485,67 @@ mod tests {
         assert_eq!(room.points.len(), 3);
         assert!(!room.points.contains(&remove));
         assert!(project.point(remove).is_none());
+    }
+
+    /// Regression test: rectangle 10000×8000 with one side split at the midpoint.
+    /// Override the two half-edges from 4000+4000 to 2000+6000 (same total 8000).
+    /// The area must remain a×b = 80_000_000 mm², but `area_from_measurements`
+    /// gives a wrong result because it reconstructs the polygon using coordinate
+    /// angles that don't match the overridden distances.
+    #[test]
+    fn test_room_area_with_distance_overrides_on_split_side() {
+        //   p0 -------- p1 ---- p2
+        //   |                    |
+        //   |                    |   a = 10000
+        //   |                    |
+        //   p4 ---------------- p3
+        //        b = 8000
+        //   p1 is the midpoint of the top side (at x=4000).
+        //   Top side: p0→p1 = 4000, p1→p2 = 4000.
+        //   We override: p0→p1 = 2000, p1→p2 = 6000 (total still 8000).
+
+        let mut project = Project::new("test".to_string());
+        let ids: Vec<Uuid> = (0..5).map(|_| Uuid::new_v4()).collect();
+        let positions = [
+            DVec2::new(0.0, 0.0),      // p0 — top-left
+            DVec2::new(4000.0, 0.0),    // p1 — midpoint of top side
+            DVec2::new(8000.0, 0.0),    // p2 — top-right
+            DVec2::new(8000.0, 10000.0),// p3 — bottom-right
+            DVec2::new(0.0, 10000.0),   // p4 — bottom-left
+        ];
+
+        for (i, &id) in ids.iter().enumerate() {
+            project.points.push(Point {
+                id,
+                position: positions[i],
+                height: 2700.0,
+            });
+        }
+
+        project.ensure_contour_edges(&ids);
+        let room = Room::new("Rect".to_string(), ids.clone(), Room::default_color());
+        let room_id = room.id;
+        project.rooms.push(room);
+
+        // Sanity: without overrides the area is 10000 × 8000 = 80_000_000
+        let area_before = project.room(room_id).unwrap().floor_area(&project);
+        assert!(
+            (area_before - 80_000_000.0).abs() < 1.0,
+            "baseline area should be 80M, got {area_before}"
+        );
+
+        // Override top-side half-edges: 4000+4000 → 2000+6000 (same sum)
+        let e01 = project.find_edge(ids[0], ids[1]).unwrap().id;
+        let e12 = project.find_edge(ids[1], ids[2]).unwrap().id;
+        project.edges.iter_mut().find(|e| e.id == e01).unwrap().distance_override = Some(2000.0);
+        project.edges.iter_mut().find(|e| e.id == e12).unwrap().distance_override = Some(6000.0);
+
+        let area_after = project.room(room_id).unwrap().floor_area(&project);
+        assert!(
+            (area_after - 80_000_000.0).abs() < 1.0,
+            "area with overrides should still be 80M, got {area_after} (delta = {})",
+            (area_after - 80_000_000.0).abs()
+        );
     }
 
     #[test]

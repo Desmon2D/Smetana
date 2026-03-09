@@ -55,7 +55,7 @@ All geometry is built from **Points** as the fundamental primitive:
 
 - **Point-first architecture**: Points are the atomic primitives. Rooms, walls, and openings are ordered sets of point UUIDs. Edges connect point pairs and are auto-created when polygons are finalized. Deleting a point cascade-deletes all referencing objects.
 - **Coordinates in millimeters**: All model geometry uses `glam::DVec2` for world-space coordinates (mm). Canvas converts to screen pixels via zoom factor.
-- **Edge overrides**: Each edge has optional `distance_override` and `angle_override`. When set, room area computation switches from coordinate-based Shoelace to measurement-based polygon reconstruction.
+- **Edge overrides**: Each edge has optional `distance_override`. When set, room area computation uses direction-based polygon reconstruction (coordinate directions + overridden distances) instead of pure coordinate-based Shoelace.
 - **OpeningKind enum**: `Door { height, width }` | `Window { height, width, sill_height, reveal_width }` — use pattern matching.
 - **Manual room creation**: Users click existing points to define room contours. No automatic room detection. Cutouts are added via a button in the room properties panel.
 - **Cascade delete**: `remove_point(id)` removes all edges, rooms, walls, and openings referencing that point. `remove_edge/room/wall/opening` only removes the specific object.

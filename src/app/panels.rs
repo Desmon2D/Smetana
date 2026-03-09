@@ -543,7 +543,6 @@ impl App {
             let point_a = e.point_a;
             let point_b = e.point_b;
             let dist_override = e.distance_override;
-            let angle_override = e.angle_override;
 
             let computed_dist = {
                 let a = self.project.point(point_a);
@@ -565,7 +564,6 @@ impl App {
             (
                 computed_dist,
                 dist_override,
-                angle_override,
                 height_a,
                 height_b,
                 wall_area_gross,
@@ -573,7 +571,7 @@ impl App {
             )
         });
 
-        let Some((computed_dist, dist_override, angle_override, height_a, height_b, wall_area_gross, wall_area_net)) =
+        let Some((computed_dist, dist_override, height_a, height_b, wall_area_gross, wall_area_net)) =
             edge_info
         else {
             ui.label("Ребро не найдено");
@@ -605,26 +603,6 @@ impl App {
         }
 
         labeled_value(ui, "Вычисленное:", format!("{:.1} мм", computed_dist));
-
-        ui.add_space(4.0);
-
-        // Angle override
-        let (angle_changed, angle_reset) = labeled_drag_override(
-            ui,
-            "Угол (°):",
-            angle_override,
-            0.0,
-            0.0..=360.0,
-            1.0,
-        );
-        if let Some(new_val) = angle_changed
-            && let Some(edge) = self.project.edge_mut(id)
-        {
-            edge.angle_override = Some(new_val);
-        }
-        if angle_reset && let Some(edge) = self.project.edge_mut(id) {
-            edge.angle_override = None;
-        }
 
         ui.add_space(4.0);
         ui.label("Подпись:");
