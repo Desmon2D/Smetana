@@ -420,7 +420,7 @@ impl DrawCtx<'_> {
             }
 
             match &opening.kind {
-                OpeningKind::Door { swing_edge, swing_outward, swing_mirrored, .. } => {
+                OpeningKind::Door { swing_edge, swing_outward, swing_mirrored, show_swing, .. } => if *show_swing {
                     let n = screen_pts.len();
                     let idx = *swing_edge % n;
                     let (p_a, p_b) = if *swing_mirrored {

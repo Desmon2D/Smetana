@@ -502,6 +502,7 @@ impl App {
                             swing_edge: 0,
                             swing_outward: true,
                             swing_mirrored: false,
+                            show_swing: true,
                         },
                         self.project.defaults.door_color,
                     ),

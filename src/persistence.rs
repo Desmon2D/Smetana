@@ -131,6 +131,7 @@ mod tests {
                 swing_edge: 0,
                 swing_outward: true,
                 swing_mirrored: false,
+                show_swing: true,
             },
             [210, 170, 120, 200],
         );

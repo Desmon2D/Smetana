@@ -639,13 +639,13 @@ impl App {
             {
                 edge.label_flip_text = !edge.label_flip_text;
             }
-            let hidden = self.project.edge(id).is_some_and(|e| e.label_hidden);
-            if ui.button(if hidden { "Показать" } else { "Скрыть" }).clicked()
-                && let Some(edge) = self.project.edge_mut(id)
-            {
-                edge.label_hidden = !edge.label_hidden;
-            }
         });
+        let mut label_visible = self.project.edge(id).is_some_and(|e| !e.label_hidden);
+        if ui.checkbox(&mut label_visible, "Показать подпись").changed()
+            && let Some(edge) = self.project.edge_mut(id)
+        {
+            edge.label_hidden = !label_visible;
+        }
 
         ui.add_space(4.0);
 
@@ -864,6 +864,7 @@ impl App {
                     swing_edge,
                     swing_outward,
                     swing_mirrored,
+                    show_swing,
                 } => {
                     labeled_drag(ui, "Высота (мм):", height, 500.0..=3500.0, 10.0);
                     labeled_drag(ui, "Ширина (мм):", width, 300.0..=3000.0, 10.0);
@@ -892,6 +893,7 @@ impl App {
                             *swing_edge = (*swing_edge + 1) % point_count.max(1);
                         }
                     });
+                    ui.checkbox(show_swing, "Показать открывание");
                 }
                 OpeningKind::Window {
                     height,

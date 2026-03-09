@@ -194,6 +194,9 @@ pub enum OpeningKind {
         /// If true, hinge is at the other end of the swing edge (mirror)
         #[serde(default)]
         swing_mirrored: bool,
+        /// If true, the swing arc (quarter circle) is drawn; if false, hidden
+        #[serde(default = "default_true")]
+        show_swing: bool,
     },
     Window {
         /// Window height (mm)
@@ -208,6 +211,10 @@ pub enum OpeningKind {
 }
 
 fn default_swing_outward() -> bool {
+    true
+}
+
+fn default_true() -> bool {
     true
 }
 
@@ -1177,6 +1184,7 @@ mod tests {
                 swing_edge: 0,
                 swing_outward: true,
                 swing_mirrored: false,
+                show_swing: true,
             },
             [210, 170, 120, 200],
         ));
