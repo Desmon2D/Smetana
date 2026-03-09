@@ -118,6 +118,15 @@ impl App {
                 .hover_pos()
                 .map(|pos| self.canvas.screen_to_world_dvec2(pos, rect.center()));
 
+            // Compute hover highlight
+            self.hover = if let Some(world_pos) = self.canvas.cursor_world_pos {
+                let hit = hit_test(world_pos, &self.project, self.canvas.zoom);
+                // Don't hover the already-selected element
+                if hit == self.selection { Selection::None } else { hit }
+            } else {
+                Selection::None
+            };
+
             let shift_held = ui.input(|i| i.modifiers.shift);
             match self.active_tool {
                 Tool::Select => self.handle_select_tool(ui, &response, rect, space_held, shift_held),
@@ -162,6 +171,7 @@ impl App {
                 canvas: &self.canvas,
                 project: &self.project,
                 selection: self.selection,
+                hover: self.hover,
                 visibility: self.visibility,
                 label_scale: self.label_scale,
             };
@@ -249,14 +259,17 @@ impl App {
         space_held: bool,
         shift_held: bool,
     ) {
-        if response.drag_started()
-            && !space_held
-            && matches!(
-                self.selection,
-                Selection::Point(_) | Selection::Label(_)
-            )
-        {
-            self.history.snapshot(&self.project);
+        if response.drag_started() && !space_held {
+            // Hit-test at drag origin so we drag the point under the cursor,
+            // not the previously selected one.
+            if let Some(hover) = response.hover_pos() {
+                let world_pos = self.canvas.screen_to_world_dvec2(hover, rect.center());
+                let hit = hit_test(world_pos, &self.project, self.canvas.zoom);
+                if matches!(hit, Selection::Point(_) | Selection::Label(_)) {
+                    self.selection = hit;
+                    self.history.snapshot(&self.project);
+                }
+            }
         }
 
         if !response.dragged_by(egui::PointerButton::Primary) || space_held {
@@ -447,6 +460,7 @@ impl App {
                             width: self.project.defaults.door_width,
                             swing_edge: 0,
                             swing_outward: true,
+                            swing_mirrored: false,
                         },
                         self.project.defaults.door_color,
                     ),

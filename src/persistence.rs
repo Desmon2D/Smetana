@@ -129,6 +129,7 @@ mod tests {
                 width: 900.0,
                 swing_edge: 0,
                 swing_outward: true,
+                swing_mirrored: false,
             },
             [210, 170, 120, 200],
         );

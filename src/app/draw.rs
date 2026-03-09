@@ -30,6 +30,7 @@ pub(super) struct DrawCtx<'a> {
     pub canvas: &'a Canvas,
     pub project: &'a Project,
     pub selection: Selection,
+    pub hover: Selection,
     pub visibility: VisibilityMode,
     pub label_scale: f32,
 }
@@ -233,7 +234,8 @@ impl DrawCtx<'_> {
 
             let (r, g, b) = ROOM_COLORS[i % ROOM_COLORS.len()];
             let is_selected = self.selection == Selection::Room(room.id);
-            let alpha = if is_selected { 60 } else { 40 };
+            let is_hovered = self.hover == Selection::Room(room.id);
+            let alpha = if is_selected { 60 } else if is_hovered { 55 } else { 40 };
             let fill = egui::Color32::from_rgba_unmultiplied(r, g, b, alpha);
 
             let hole_pts: Vec<Vec<egui::Pos2>> = room
@@ -243,8 +245,13 @@ impl DrawCtx<'_> {
                 .collect();
             fill_polygon_with_holes(self.painter, &screen_pts, &hole_pts, fill);
 
-            let outline_color = egui::Color32::from_rgba_unmultiplied(r, g, b, 80);
-            let stroke_w = if is_selected { 2.0 } else { 1.0 };
+            let (outline_color, stroke_w) = if is_selected {
+                (egui::Color32::from_rgba_unmultiplied(r, g, b, 80), 2.0)
+            } else if is_hovered {
+                (egui::Color32::from_rgba_unmultiplied(r, g, b, 120), 1.5)
+            } else {
+                (egui::Color32::from_rgba_unmultiplied(r, g, b, 80), 1.0)
+            };
             self.painter.add(egui::Shape::closed_line(
                 screen_pts,
                 egui::Stroke::new(stroke_w, outline_color),
@@ -267,12 +274,20 @@ impl DrawCtx<'_> {
             }
 
             let is_selected = self.selection == Selection::Wall(wall.id);
+            let is_hovered = self.hover == Selection::Wall(wall.id);
             let [r, g, b, a] = wall.color;
             let fill = if is_selected {
                 egui::Color32::from_rgba_unmultiplied(
                     r.saturating_add(40),
                     g.saturating_add(40),
                     b.saturating_add(40),
+                    a,
+                )
+            } else if is_hovered {
+                egui::Color32::from_rgba_unmultiplied(
+                    r.saturating_add(20),
+                    g.saturating_add(20),
+                    b.saturating_add(20),
                     a,
                 )
             } else {
@@ -283,6 +298,8 @@ impl DrawCtx<'_> {
 
             let outline_stroke = if is_selected {
                 egui::Stroke::new(2.5, egui::Color32::from_rgb(60, 160, 255))
+            } else if is_hovered {
+                egui::Stroke::new(1.5, egui::Color32::from_rgb(100, 180, 255))
             } else {
                 egui::Stroke::new(1.0, wall_outline)
             };
@@ -304,6 +321,7 @@ impl DrawCtx<'_> {
             }
 
             let is_selected = self.selection == Selection::Opening(opening.id);
+            let is_hovered = self.hover == Selection::Opening(opening.id);
 
             if screen_pts.len() >= 3 {
                 let [r, g, b, a] = opening.color;
@@ -314,6 +332,13 @@ impl DrawCtx<'_> {
                         b.saturating_add(40),
                         a,
                     )
+                } else if is_hovered {
+                    egui::Color32::from_rgba_unmultiplied(
+                        r.saturating_add(20),
+                        g.saturating_add(20),
+                        b.saturating_add(20),
+                        a,
+                    )
                 } else {
                     egui::Color32::from_rgba_unmultiplied(r, g, b, a)
                 };
@@ -321,11 +346,14 @@ impl DrawCtx<'_> {
             }
 
             match &opening.kind {
-                OpeningKind::Door { swing_edge, swing_outward, .. } => {
+                OpeningKind::Door { swing_edge, swing_outward, swing_mirrored, .. } => {
                     let n = screen_pts.len();
                     let idx = *swing_edge % n;
-                    let p_a = screen_pts[idx];
-                    let p_b = screen_pts[(idx + 1) % n];
+                    let (p_a, p_b) = if *swing_mirrored {
+                        (screen_pts[(idx + 1) % n], screen_pts[idx])
+                    } else {
+                        (screen_pts[idx], screen_pts[(idx + 1) % n])
+                    };
 
                     // Compute interior direction for this edge
                     let dx = p_b.x - p_a.x;
@@ -366,11 +394,14 @@ impl DrawCtx<'_> {
                 }
             }
 
-            if is_selected && screen_pts.len() >= 3 {
-                self.painter.add(egui::Shape::closed_line(
-                    screen_pts,
-                    egui::Stroke::new(2.0, egui::Color32::from_rgb(60, 160, 255)),
-                ));
+            if (is_selected || is_hovered) && screen_pts.len() >= 3 {
+                let stroke = if is_selected {
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(60, 160, 255))
+                } else {
+                    egui::Stroke::new(1.5, egui::Color32::from_rgb(100, 180, 255))
+                };
+                self.painter
+                    .add(egui::Shape::closed_line(screen_pts, stroke));
             }
         }
     }
@@ -393,8 +424,11 @@ impl DrawCtx<'_> {
             let sb = self.canvas.dvec2_to_screen(b.position, self.center);
 
             let is_selected = self.selection == Selection::Edge(edge.id);
+            let is_hovered = self.hover == Selection::Edge(edge.id);
             let (color, width) = if is_selected {
                 (selected_color, 2.5)
+            } else if is_hovered {
+                (egui::Color32::from_rgb(100, 180, 255), 2.0)
             } else {
                 (normal_color, 1.0)
             };
@@ -408,12 +442,18 @@ impl DrawCtx<'_> {
         for point in &self.project.points {
             let screen = self.canvas.dvec2_to_screen(point.position, self.center);
             let is_selected = self.selection == Selection::Point(point.id);
+            let is_hovered = self.hover == Selection::Point(point.id);
 
-            let radius = if is_selected { 7.0 } else { 5.0 };
+            let radius = if is_selected { 7.0 } else if is_hovered { 6.0 } else { 5.0 };
             let (fill, stroke) = if is_selected {
                 (
                     egui::Color32::from_rgb(0, 120, 255),
                     egui::Stroke::new(2.0, egui::Color32::WHITE),
+                )
+            } else if is_hovered {
+                (
+                    egui::Color32::from_rgb(230, 230, 240),
+                    egui::Stroke::new(1.5, egui::Color32::from_rgb(100, 180, 255)),
                 )
             } else {
                 (
@@ -551,8 +591,11 @@ impl DrawCtx<'_> {
             }
             let screen_pos = self.canvas.dvec2_to_screen(label.position, self.center);
             let is_selected = self.selection == Selection::Label(label.id);
+            let is_hovered = self.hover == Selection::Label(label.id);
             let color = if is_selected {
                 selected_color
+            } else if is_hovered {
+                egui::Color32::from_rgb(240, 240, 245)
             } else {
                 normal_color
             };
@@ -567,16 +610,21 @@ impl DrawCtx<'_> {
                 label.rotation as f32,
             );
 
-            if is_selected {
+            if is_selected || is_hovered {
                 let pad = 3.0;
                 let sel_rect = egui::Rect::from_center_size(
                     screen_pos,
                     egui::vec2(size.x + pad * 2.0, size.y + pad * 2.0),
                 );
+                let stroke = if is_selected {
+                    egui::Stroke::new(1.5, egui::Color32::from_rgb(60, 160, 255))
+                } else {
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 180, 255))
+                };
                 self.painter.rect_stroke(
                     sel_rect,
                     2.0,
-                    egui::Stroke::new(1.5, egui::Color32::from_rgb(60, 160, 255)),
+                    stroke,
                     egui::StrokeKind::Outside,
                 );
             }

@@ -125,6 +125,9 @@ pub enum OpeningKind {
         /// If true, arc swings outward from polygon; if false, into polygon interior
         #[serde(default = "default_swing_outward")]
         swing_outward: bool,
+        /// If true, hinge is at the other end of the swing edge (mirror)
+        #[serde(default)]
+        swing_mirrored: bool,
     },
     Window {
         /// Window height (mm)
@@ -1018,6 +1021,7 @@ mod tests {
                 width: 900.0,
                 swing_edge: 0,
                 swing_outward: true,
+                swing_mirrored: false,
             },
             [210, 170, 120, 200],
         ));

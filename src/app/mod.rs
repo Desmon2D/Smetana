@@ -170,6 +170,7 @@ pub struct App {
     tool_state: ToolState,
     visibility: VisibilityMode,
 
+    hover: Selection,
     history: History,
     edit_snapshot_version: Option<u64>,
     status_message: Option<(String, Instant)>,
@@ -199,6 +200,7 @@ impl App {
             tool_state: ToolState::default(),
             visibility: VisibilityMode::All,
 
+            hover: Selection::None,
             history: History::new(),
             edit_snapshot_version: None,
             status_message: None,
@@ -217,6 +219,7 @@ impl App {
         self.canvas = Canvas::default();
         self.tool_state = ToolState::default();
         self.visibility = VisibilityMode::All;
+        self.hover = Selection::None;
         self.history = History::new();
         self.edit_snapshot_version = None;
         self.status_message = None;

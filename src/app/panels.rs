@@ -787,6 +787,7 @@ impl App {
                     width,
                     swing_edge,
                     swing_outward,
+                    swing_mirrored,
                 } => {
                     labeled_drag(ui, "Высота (мм):", height, 500.0..=3500.0, 10.0);
                     labeled_drag(ui, "Ширина (мм):", width, 300.0..=3000.0, 10.0);
@@ -794,6 +795,9 @@ impl App {
                     ui.horizontal(|ui| {
                         if ui.button("Направление").clicked() {
                             *swing_outward = !*swing_outward;
+                        }
+                        if ui.button("Отразить").clicked() {
+                            *swing_mirrored = !*swing_mirrored;
                         }
                         if ui.button("Грань").clicked() {
                             *swing_edge = (*swing_edge + 1) % point_count.max(1);
